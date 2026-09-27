@@ -31,7 +31,10 @@ function mount() {
           <label for="tib-url">API 地址</label><input id="tib-url" data-setting="baseUrl" type="url" placeholder="http://127.0.0.1:8317/v1" spellcheck="false" autocomplete="off">
           <label for="tib-key">API Key</label><input id="tib-key" data-setting="apiKey" type="password" placeholder="CLIProxyAPI 客户端密钥" autocomplete="off" spellcheck="false">
           <label class="tib-check"><input data-setting="rememberKey" type="checkbox">记住密钥<span>保存到酒馆设置</span></label>
-          <div class="tib-model-row"><div><label for="tib-model">图片模型</label><input id="tib-model" data-setting="model" list="tib-models" autocomplete="off" spellcheck="false"></div><button type="button" data-action="models" class="tib-secondary">读取模型</button></div>
+          <div class="tib-model-row"><div><label for="tib-model">图片模型</label><input id="tib-model" data-setting="model" list="tib-models" autocomplete="off" spellcheck="false"></div></div>
+          <div class="tib-model-actions"><button type="button" data-action="model-list" class="tib-secondary" aria-expanded="false" aria-controls="tib-model-list">选择模型</button><button type="button" data-action="models" class="tib-secondary">读取模型</button></div>
+          <p id="tib-model-hint" class="tib-hint">可直接输入模型名，或点「选择模型」从列表中挑选。</p>
+          <div id="tib-model-list" class="tib-model-list" role="group" aria-label="可用模型" hidden></div>
           <datalist id="tib-models"><option value="gpt-image-2.5"></option><option value="gpt-image-2.5-flare"></option><option value="gpt-image-2.5-sunburst"></option><option value="gpt-image-2"></option></datalist>
           <div class="tib-section-label">场景</div>
           <div class="tib-columns"><div><label for="tib-count">最近聊天层数</label><input id="tib-count" data-setting="recentCount" type="number" min="1" max="100" step="1"></div><div><label for="tib-target">图片插入楼层</label><select id="tib-target" aria-describedby="tib-context-info"></select></div></div>
@@ -66,6 +69,39 @@ function mount() {
             ? '由酒馆服务器访问 API。需在酒馆 config.yaml 中启用 enableCorsProxy: true 并重启。127.0.0.1 指酒馆服务器；Docker 部署时指酒馆容器。'
             : '由当前设备访问 API，需要 API 允许跨域。127.0.0.1 指当前设备。远程部署酒馆时，建议切换为后台转发。';
     }
+    // <datalist> never opens on iOS Safari (and is flaky in in-app browsers), so the model picker is
+    // our own tappable list; typing in the field keeps working as before on every platform.
+    function syncModelSelection() {
+        for (const item of $('#tib-model-list').children) item.setAttribute('aria-pressed', String(item.dataset.model === settings.model));
+    }
+    function renderModelList(names) {
+        const list = $('#tib-model-list');
+        list.replaceChildren(...names.map(name => {
+            const item = document.createElement('button');
+            item.type = 'button'; item.className = 'tib-model-item';
+            item.setAttribute('aria-pressed', 'false'); item.dataset.model = name; item.textContent = name;
+            return item;
+        }));
+        $('[data-action="model-list"]').textContent = names.length ? `选择模型 · ${names.length}` : '选择模型';
+        $('#tib-model-hint').textContent = names.length
+            ? '点一个模型即可选用；也可以直接在输入框里改写。'
+            : '可直接输入模型名，或点「读取模型」获取列表。';
+        syncModelSelection();
+    }
+    function toggleModelList(force) {
+        const list = $('#tib-model-list');
+        const show = typeof force === 'boolean' ? force : list.hidden;
+        if (show && !list.childElementCount) { status('还没有模型列表，先点「读取模型」。', 'warning'); return; }
+        list.hidden = !show;
+        $('[data-action="model-list"]').setAttribute('aria-expanded', String(show));
+        if (show) list.querySelector('[aria-pressed="true"]')?.scrollIntoView?.({ block: 'nearest' });
+    }
+    function applyModel(name) {
+        $('#tib-model').value = name;
+        settings.model = name; persistSettings();
+        syncModelSelection(); toggleModelList(false);
+        status(`已选用模型 ${name}。`, 'success');
+    }
     function position() {
         const max = Math.max(12, innerHeight - 64);
         const fraction = Number.isFinite(settings.floatTop) ? settings.floatTop : 0.7;
@@ -97,6 +133,7 @@ function mount() {
     }
     function close() {
         opened = false; panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
+        toggleModelList(false);
         if (root.contains(document.activeElement)) (lastFocus?.isConnected ? lastFocus : launcher).focus();
         scheduleHide();
     }
@@ -218,6 +255,8 @@ function mount() {
                 if (!Array.isArray(body.data)) throw new Error('模型接口没有返回 data 数组。');
                 const names = body.data.map(model => model.id).filter(name => typeof name === 'string').sort();
                 $('#tib-models').replaceChildren(...names.map(name => new Option(name, name)));
+                renderModelList(names);
+                toggleModelList(true);
                 status(`已读取 ${names.length} 个模型。可输入或选择图片模型；列表不保证该模型有生图权限。`, 'success');
             } else if (action === 'retry' && pending) {
                 await saveAndAttach(pending, controller.signal, true);
@@ -252,12 +291,16 @@ function mount() {
         listen(input, 'input', () => {
             settings[key] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
             persistSettings(); refreshPrompt(); refreshTransportHint(); wake(); scheduleHide();
+            if (key === 'model') { syncModelSelection(); toggleModelList(false); }
         });
     }
     listen($('#tib-target'), 'change', event => { selectedIndex = Number(event.target.value); refreshPrompt(); });
     listen($('#tib-preview'), 'toggle', refreshPrompt);
     listen(root, 'click', event => {
+        const picked = event.target.closest('.tib-model-item')?.dataset.model;
+        if (picked) { applyModel(picked); return; }
         const action = event.target.closest('[data-action]')?.dataset.action;
+        if (action === 'model-list') { toggleModelList(); return; }
         if (action === 'close') close();
         if (action === 'cancel') job?.abort('user');
         if (action === 'discard' && !job) {

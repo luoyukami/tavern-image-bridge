@@ -32,6 +32,12 @@
 #tib-root .tib-check span { margin-left: auto; color: #88888d; font-size: 10px; }
 #tib-root .tib-model-row { display: flex; align-items: end; gap: 8px; }
 #tib-root .tib-model-row > div { flex: 1; min-width: 0; }
+#tib-root .tib-model-actions { display: flex; gap: 8px; margin-top: 8px; }
+#tib-root .tib-model-actions .tib-secondary { flex: 1 1 0; }
+#tib-root .tib-model-list { display: flex; flex-direction: column; gap: 2px; margin: 0 0 10px; padding: 5px; max-height: 220px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #ffffff1c; border-radius: 10px; background: #161719a6; scrollbar-width: thin; scrollbar-color: #555 transparent; }
+#tib-root .tib-model-item { display: block; width: 100%; min-height: 40px; padding: 9px 10px; border: 0; border-radius: 7px; background: transparent; color: #dcd7d0; font-size: 12px; text-align: left; overflow-wrap: anywhere; }
+#tib-root .tib-model-item:hover, #tib-root .tib-model-item:focus-visible { background: #ffffff12; }
+#tib-root .tib-model-item[aria-pressed="true"] { background: #e6bc8926; color: #f0d3ab; }
 #tib-root .tib-columns { display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; }
 #tib-root .tib-columns > div { min-width: 0; }
 #tib-root .tib-hint { color: #939398; font-size: 10px; line-height: 1.7; margin: 7px 0 10px; }
