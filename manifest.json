@@ -7,7 +7,7 @@
   "css": "style.css",
   "author": "luoyukami",
   "homePage": "https://github.com/luoyukami/tavern-image-bridge",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "auto_update": true,
   "minimum_client_version": "1.12.0",
   "hooks": { "enable": "onEnable", "disable": "onDisable" }

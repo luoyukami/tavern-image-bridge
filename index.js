@@ -1,5 +1,5 @@
 import { KEY, apiRequest, captureTarget, chatIdentity, eligibleMessages, loadSettings, planAutoGeneration, resolveTargetIndex, safeError } from './core.js';
-import { MEMORY_KEY, buildPrompt, describeMemory, formatAppearanceBlock, mergeEntries, normalizeMemory, planMemoryDiff } from './memory.js';
+import { MEMORY_KEY, buildPrompt, describeMemory, formatAppearanceBlock, memoryConnection, mergeEntries, normalizeMemory, planMemoryDiff } from './memory.js';
 import { createService, TargetChangedError } from './service.js';
 
 let mounted;
@@ -64,7 +64,11 @@ function mount() {
             <label for="tib-memory-url">API 地址</label><input id="tib-memory-url" data-setting="memoryBaseUrl" type="url" placeholder="留空 = 沿用生图的地址" spellcheck="false" autocomplete="off">
             <label for="tib-memory-key">API Key</label><input id="tib-memory-key" data-setting="memoryApiKey" type="password" placeholder="留空 = 沿用生图的密钥" autocomplete="off" spellcheck="false">
             <label class="tib-check"><input data-setting="memoryRememberKey" type="checkbox">记住密钥<span>保存到酒馆设置</span></label>
-            <label for="tib-memory-model">文字模型</label><input id="tib-memory-model" data-setting="memoryModel" placeholder="例如 deepseek-v4-flash（文字模型，不是生图模型）" spellcheck="false" autocomplete="off">
+            <label for="tib-memory-model">文字模型</label><input id="tib-memory-model" data-setting="memoryModel" list="tib-memory-models" placeholder="例如 deepseek-v4-flash（文字模型，不是生图模型）" spellcheck="false" autocomplete="off">
+            <div class="tib-model-actions"><button type="button" data-action="memory-model-list" class="tib-secondary" aria-expanded="false" aria-controls="tib-memory-model-list">选择模型</button><button type="button" data-action="memory-models" class="tib-secondary">读取模型</button></div>
+            <p id="tib-memory-model-hint" class="tib-hint">文字模型走这个连接的 /v1/models 与 /chat/completions；地址和密钥留空就沿用生图那份。</p>
+            <div id="tib-memory-model-list" class="tib-model-list" role="group" aria-label="可选文字模型" hidden></div>
+            <datalist id="tib-memory-models"></datalist>
             <div class="tib-columns"><div><label for="tib-memory-floors">总结楼层数</label><input id="tib-memory-floors" data-setting="memoryFloors" type="number" min="1" max="200" step="1"></div><div><label for="tib-memory-timeout">最长等待（秒）</label><input id="tib-memory-timeout" data-setting="memoryTimeoutSeconds" type="number" min="30" max="900" step="30"></div></div>
             <p class="tib-hint">总结请求把最近这么多层一次性交给模型，产出完整档案；对比请求只发送最新一层回复，返回 NoUpdate 时档案一点不动。两者与生图异步，互不等待。</p>
             <label class="tib-check"><input data-setting="memoryAuto" type="checkbox">模型回复结束后自动对比更新<span>只发最新一层</span></label>
@@ -98,36 +102,50 @@ function mount() {
     }
     // <datalist> never opens on iOS Safari (and is flaky in in-app browsers), so the model picker is
     // our own tappable list; typing in the field keeps working as before on every platform.
-    function syncModelSelection() {
-        for (const item of $('#tib-model-list').children) item.setAttribute('aria-pressed', String(item.dataset.model === settings.model));
+    // The image connection and the appearance-memory connection share this picker.
+    const MODEL_PICKERS = {
+        image: { input: '#tib-model', list: '#tib-model-list', toggle: '[data-action="model-list"]', hint: '#tib-model-hint', setting: 'model', clear: '选择模型' },
+        memory: { input: '#tib-memory-model', list: '#tib-memory-model-list', toggle: '[data-action="memory-model-list"]', hint: '#tib-memory-model-hint', setting: 'memoryModel', clear: '选择模型' },
+    };
+    function syncModelSelection(picker = 'image') {
+        const { list, setting } = MODEL_PICKERS[picker];
+        for (const item of $(list).children) item.setAttribute('aria-pressed', String(item.dataset.model === settings[setting]));
     }
-    function renderModelList(names) {
-        const list = $('#tib-model-list');
-        list.replaceChildren(...names.map(name => {
+    function renderModelList(names, picker = 'image') {
+        const spec = MODEL_PICKERS[picker];
+        $(spec.list).replaceChildren(...names.map(name => {
             const item = document.createElement('button');
             item.type = 'button'; item.className = 'tib-model-item';
             item.setAttribute('aria-pressed', 'false'); item.dataset.model = name; item.textContent = name;
             return item;
         }));
-        $('[data-action="model-list"]').textContent = names.length ? `选择模型 · ${names.length}` : '选择模型';
-        $('#tib-model-hint').textContent = names.length
+        $(spec.toggle).textContent = names.length ? `${spec.clear} · ${names.length}` : spec.clear;
+        $(spec.hint).textContent = names.length
             ? '点一个模型即可选用；也可以直接在输入框里改写。'
             : '可直接输入模型名，或点「读取模型」获取列表。';
-        syncModelSelection();
+        syncModelSelection(picker);
     }
-    function toggleModelList(force) {
-        const list = $('#tib-model-list');
+    function toggleModelList(force, picker = 'image') {
+        const spec = MODEL_PICKERS[picker];
+        const list = $(spec.list);
         const show = typeof force === 'boolean' ? force : list.hidden;
-        if (show && !list.childElementCount) { status('还没有模型列表，先点「读取模型」。', 'warning'); return; }
+        if (show && !list.childElementCount) {
+            const message = '还没有模型列表，先点「读取模型」。';
+            if (picker === 'memory') memoryProgress(message, 'warning'); else status(message, 'warning');
+            return;
+        }
         list.hidden = !show;
-        $('[data-action="model-list"]').setAttribute('aria-expanded', String(show));
+        $(spec.toggle).setAttribute('aria-expanded', String(show));
         if (show) list.querySelector('[aria-pressed="true"]')?.scrollIntoView?.({ block: 'nearest' });
     }
-    function applyModel(name) {
-        $('#tib-model').value = name;
-        settings.model = name; persistSettings();
-        syncModelSelection(); toggleModelList(false);
-        status(`已选用模型 ${name}。`, 'success');
+    function applyModel(name, picker = 'image') {
+        const spec = MODEL_PICKERS[picker];
+        $(spec.input).value = name;
+        settings[spec.setting] = name; persistSettings();
+        syncModelSelection(picker); toggleModelList(false, picker);
+        const message = `已选用模型 ${name}。`;
+        if (picker === 'memory') { memoryProgress(message, 'success'); renderMemory(); }
+        else status(message, 'success');
     }
     // ---- 形象记忆 ----
     // 档案按聊天保存：优先写进酒馆的 chat_metadata（跟着这个聊天文件走），旧版本退回到扩展设置里按聊天分区存。
@@ -210,7 +228,7 @@ function mount() {
         if (tab === 'memory') renderMemory();
     }
     function setMemoryBusy(value) {
-        for (const action of ['memory-summary', 'memory-diff', 'memory-clear']) $(`[data-action="${action}"]`).disabled = value;
+        for (const action of ['memory-summary', 'memory-diff', 'memory-clear', 'memory-models']) $(`[data-action="${action}"]`).disabled = value;
         $('[data-action="memory-cancel"]').hidden = !value;
         $('#tib-pane-memory').setAttribute('aria-busy', String(value));
     }
@@ -221,6 +239,27 @@ function mount() {
                 : '已取消，档案未改动。';
         }
         return safeError(error, config.memoryApiKey);
+    }
+    async function runMemoryModels() {
+        if (memoryJob) return;
+        const config = { ...settings };
+        const controller = new AbortController();
+        memoryJob = controller; setMemoryBusy(true);
+        memoryProgress('正在读取模型列表…');
+        try {
+            const connection = memoryConnection(config);
+            const body = await apiRequest(connection, 'models', { signal: controller.signal, requestHeaders: getContext().getRequestHeaders() });
+            if (!Array.isArray(body.data)) throw new Error('模型接口没有返回 data 数组。');
+            const names = body.data.map(model => model.id).filter(name => typeof name === 'string').sort();
+            $('#tib-memory-models').replaceChildren(...names.map(name => new Option(name, name)));
+            renderModelList(names, 'memory');
+            toggleModelList(true, 'memory');
+            memoryProgress(`已读取 ${names.length} 个模型，点一个即可选用；列表不保证都能做总结。`, 'success');
+        } catch (error) {
+            memoryProgress(safeError(error, config.memoryApiKey), 'error');
+        } finally {
+            memoryJob = null; setMemoryBusy(false);
+        }
     }
     async function runMemory(kind) {
         if (memoryJob) return;
@@ -461,7 +500,8 @@ function mount() {
         listen(input, 'input', () => {
             settings[key] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
             persistSettings(); refreshPrompt(); refreshTransportHint(); wake(); scheduleHide();
-            if (key === 'model') { syncModelSelection(); toggleModelList(false); }
+            if (key === 'model') { syncModelSelection('image'); toggleModelList(false, 'image'); }
+            if (key === 'memoryModel') { syncModelSelection('memory'); toggleModelList(false, 'memory'); }
             if (key.startsWith('memory')) renderMemory();
         });
     }
@@ -471,12 +511,13 @@ function mount() {
     listen(root, 'click', event => {
         const tab = event.target.closest('[data-tab]')?.dataset.tab;
         if (tab) { setTab(tab); return; }
-        const picked = event.target.closest('.tib-model-item')?.dataset.model;
-        if (picked) { applyModel(picked); return; }
+        const item = event.target.closest('.tib-model-item');
+        if (item) { applyModel(item.dataset.model, item.closest('#tib-memory-model-list') ? 'memory' : 'image'); return; }
         const removeName = event.target.closest('[data-memory-remove]')?.dataset.memoryRemove;
         if (removeName) { dropMemoryEntry(removeName); return; }
         const action = event.target.closest('[data-action]')?.dataset.action;
-        if (action === 'model-list') { toggleModelList(); return; }
+        if (action === 'model-list' || action === 'memory-model-list') { toggleModelList(undefined, action === 'memory-model-list' ? 'memory' : 'image'); return; }
+        if (action === 'memory-models') { void runMemoryModels(); return; }
         if (action === 'memory-summary' || action === 'memory-diff') { void runMemory(action === 'memory-summary' ? 'summary' : 'diff'); return; }
         if (action === 'memory-cancel') { memoryJob?.abort('user'); return; }
         if (action === 'memory-clear') {
