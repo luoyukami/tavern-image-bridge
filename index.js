@@ -1,4 +1,4 @@
-import { KEY, DEFAULTS, apiRequest, buildPrompt, captureTarget, eligibleMessages, resolveTargetIndex, safeError } from './core.js';
+import { KEY, apiRequest, buildPrompt, captureTarget, eligibleMessages, loadSettings, resolveTargetIndex, safeError } from './core.js';
 import { createService, TargetChangedError } from './service.js';
 
 let mounted;
@@ -8,7 +8,7 @@ function mount() {
     if (mounted || !globalThis.SillyTavern?.getContext) return;
     const context = getContext();
     const stored = context.extensionSettings[KEY] || {};
-    const settings = { ...DEFAULTS, ...stored, apiKey: stored.rememberKey ? stored.apiKey || '' : '' };
+    const settings = loadSettings(stored);
     const lifetime = new AbortController();
     const service = createService(getContext);
     let job = null, pending = null, previewUrl = null, hideTimer = null, clockTimer = null, selectedIndex = -1;
@@ -25,6 +25,8 @@ function mount() {
         <div class="tib-body">
           <p class="tib-intro">把此刻的故事，变成一幅画。</p>
           <div class="tib-section-label">连接</div>
+          <label for="tib-transport">连接方式</label><select id="tib-transport" data-setting="transport"><option value="server">酒馆后台转发（推荐）</option><option value="direct">浏览器直连</option></select>
+          <p id="tib-transport-hint" class="tib-hint" aria-live="polite"></p>
           <label for="tib-url">API 地址</label><input id="tib-url" data-setting="baseUrl" type="url" placeholder="http://127.0.0.1:8317/v1" spellcheck="false" autocomplete="off">
           <label for="tib-key">API Key</label><input id="tib-key" data-setting="apiKey" type="password" placeholder="CLIProxyAPI 客户端密钥" autocomplete="off" spellcheck="false">
           <label class="tib-check"><input data-setting="rememberKey" type="checkbox">记住密钥<span>保存到酒馆设置</span></label>
@@ -57,6 +59,11 @@ function mount() {
         getContext().saveSettingsDebounced();
     }
     function status(text, type = '') { $('#tib-status').textContent = text; $('#tib-status').dataset.type = type; }
+    function refreshTransportHint() {
+        $('#tib-transport-hint').textContent = settings.transport === 'server'
+            ? '由酒馆服务器访问 API。需在酒馆 config.yaml 中启用 enableCorsProxy: true 并重启。127.0.0.1 指酒馆服务器；Docker 部署时指酒馆容器。'
+            : '由当前设备访问 API，需要 API 允许跨域。127.0.0.1 指当前设备。远程部署酒馆时，建议切换为后台转发。';
+    }
     function position() {
         const max = Math.max(12, innerHeight - 64);
         const fraction = Number.isFinite(settings.floatTop) ? settings.floatTop : 0.7;
@@ -151,7 +158,7 @@ function mount() {
         try {
             if (action === 'models') {
                 status('正在读取模型列表…');
-                const body = await apiRequest(config, 'models', { signal: controller.signal });
+                const body = await apiRequest(config, 'models', { signal: controller.signal, requestHeaders: getContext().getRequestHeaders() });
                 if (!Array.isArray(body.data)) throw new Error('模型接口没有返回 data 数组。');
                 const names = body.data.map(model => model.id).filter(name => typeof name === 'string').sort();
                 $('#tib-models').replaceChildren(...names.map(name => new Option(name, name)));
@@ -176,7 +183,7 @@ function mount() {
         if (input.type === 'checkbox') input.checked = Boolean(settings[key]); else input.value = settings[key];
         listen(input, 'input', () => {
             settings[key] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
-            persistSettings(); refreshPrompt(); wake(); scheduleHide();
+            persistSettings(); refreshPrompt(); refreshTransportHint(); wake(); scheduleHide();
         });
     }
     listen($('#tib-target'), 'change', event => { selectedIndex = Number(event.target.value); refreshPrompt(); });
@@ -228,7 +235,7 @@ function mount() {
     entry.title = 'CLIProxyAPI 图片生成设置';
     document.querySelector('#extensions_settings2, #extensions_settings')?.append(entry);
     listen(entry, 'click', open);
-    position(); refreshTargets(); scheduleHide();
+    position(); refreshTargets(); refreshTransportHint(); scheduleHide();
     mounted = { destroy() {
         job?.abort('disabled'); lifetime.abort(); clearTimeout(hideTimer); clearInterval(clockTimer);
         for (const [type, handler] of listeners) context.eventSource.removeListener?.(type, handler);

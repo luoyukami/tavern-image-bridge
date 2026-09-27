@@ -11,11 +11,23 @@ export const DEFAULT_PRESET = `请根据以下聊天情节，直接生成一张�
 {{chat}}`;
 
 export const DEFAULTS = Object.freeze({
-    baseUrl: 'http://127.0.0.1:8317/v1', apiKey: '', rememberKey: false,
+    transport: 'server', baseUrl: 'http://127.0.0.1:8317/v1', apiKey: '', rememberKey: false,
     model: 'gpt-image-2.5', recentCount: 6, preset: DEFAULT_PRESET,
     size: '1024x1024', quality: 'auto', timeoutSeconds: 600, autoHide: true,
     floatTop: 0.7,
 });
+
+export function loadSettings(stored = {}) {
+    // Preserve the network location deliberately configured by existing 1.0 users.
+    const transport = stored.transport ?? (Object.keys(stored).length ? 'direct' : DEFAULTS.transport);
+    return { ...DEFAULTS, ...stored, transport, apiKey: stored.rememberKey ? stored.apiKey || '' : '' };
+}
+
+export function createImageId(cryptoApi = globalThis.crypto) {
+    if (typeof cryptoApi.randomUUID === 'function') return cryptoApi.randomUUID();
+    // randomUUID is unavailable on non-local HTTP origins; getRandomValues is not.
+    return Array.from(cryptoApi.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('');
+}
 
 export function endpoints(input) {
     let url;
@@ -31,6 +43,7 @@ export function endpoints(input) {
 }
 
 export function validateSettings(settings) {
+    if (!['server', 'direct'].includes(settings.transport)) throw new Error('请选择酒馆后台转发或浏览器直连。');
     endpoints(settings.baseUrl);
     if (!String(settings.model).trim()) throw new Error('请填写图片模型名称。');
     if (!Number.isInteger(Number(settings.recentCount)) || settings.recentCount < 1 || settings.recentCount > 100) throw new Error('最近聊天层数必须是 1–100 的整数。');
@@ -96,11 +109,25 @@ export function safeError(error, secret = '') {
     return text.replace(/Bearer\s+[^\s"',;<>]+/gi, 'Bearer [已隐藏]').slice(0, 650);
 }
 
-async function readJson(response) {
+async function readJson(response, { transport = 'direct' } = {}) {
+    const text = await response.text();
+    if (transport === 'server') {
+        if (response.status === 401 && /\bbasic\b/i.test(response.headers.get('www-authenticate') || '')) {
+            throw new Error('酒馆或前置反代启用了 HTTP Basic Auth，与内置代理转发 API Key 的 Authorization 请求头冲突。请使用受保护的同源定向反代，或切换浏览器直连；不要关闭登录保护。');
+        }
+        if (response.status === 404 && /CORS proxy is disabled/i.test(text)) {
+            throw new Error('酒馆后台代理尚未启用。请在酒馆实际使用的 config.yaml 中设置 enableCorsProxy: true，然后重启酒馆。无需修改 CLIProxyAPI 的 CORS。');
+        }
+        if (response.redirected || /^\s*(?:<!doctype html|<html)/i.test(text)) {
+            throw new Error(`HTTP ${response.status}：酒馆后台返回了网页。请检查登录状态、/proxy/ 路由及前置反代配置。`);
+        }
+    }
     let body;
-    try { body = await response.json(); } catch {
+    try { body = JSON.parse(text); } catch {
+        if (transport === 'server') throw new Error(`HTTP ${response.status}：酒馆后台未返回 JSON。请检查 enableCorsProxy、酒馆服务器到 API 的连接、内网白名单及反代日志。`);
         throw new Error(`HTTP ${response.status}：接口没有返回 JSON。请检查 API 地址、反向代理和登录状态。`);
     }
+    if (!body || typeof body !== 'object') throw new Error('接口返回了无效的 JSON 内容。');
     if (!response.ok || body.error) {
         const detail = typeof body.error === 'string' ? body.error : body.error?.message;
         const tips = { 401: '请检查 CLIProxyAPI 的客户端 API Key（不是管理密钥）。', 403: '访问被拒绝，请检查代理权限。', 404: '请检查路径、代理版本和 disable-image-generation 配置。', 429: '额度或速率受限，请稍后手动重试。' };
@@ -109,17 +136,42 @@ async function readJson(response) {
     return body;
 }
 
-export async function apiRequest(settings, kind, { signal, prompt, fetchImpl = fetch } = {}) {
-    const headers = { Accept: 'application/json' };
-    if (settings.apiKey?.trim()) headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
-    const options = { method: kind === 'models' ? 'GET' : 'POST', headers, signal, credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer' };
-    if (kind !== 'models') { headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(makePayload(settings, prompt)); }
+export function routeRequest(settings, target, { signal, method = 'GET', body, requestHeaders = {}, withApiKey = true, accept = 'application/json' } = {}) {
+    const transport = settings.transport ?? DEFAULTS.transport;
+    if (!['server', 'direct'].includes(transport)) throw new Error('无效的连接方式。');
+    const url = new URL(target);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('转发目标必须是无内嵌账号密码的 HTTP/HTTPS 地址。');
+    const headers = { Accept: accept };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (withApiKey && settings.apiKey?.trim()) headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
+    if (transport === 'server') {
+        // Prevent the browser's cached HTTP Basic credentials from being forwarded
+        // to the upstream when the API is keyless or a returned image is downloaded.
+        headers.Authorization ??= 'Bearer';
+        const csrf = new Headers(requestHeaders).get('X-CSRF-Token');
+        if (csrf) headers['X-CSRF-Token'] = csrf;
+    }
+    const options = { method, headers, signal, credentials: transport === 'server' ? 'same-origin' : 'omit', cache: 'no-store', referrerPolicy: 'no-referrer' };
+    if (body !== undefined) options.body = body;
+    // The upstream is encoded as one route parameter so signed image query strings
+    // remain part of the upstream URL instead of the SillyTavern URL's query.
+    if (transport === 'server') options.redirect = 'error';
+    return { url: transport === 'server' ? `/proxy/${encodeURIComponent(url.href)}` : url.href, options };
+}
+
+export async function apiRequest(settings, kind, { signal, prompt, fetchImpl = fetch, requestHeaders = {} } = {}) {
+    if (!['models', 'generate'].includes(kind)) throw new Error('无效的 API 请求类型。');
+    const { url, options } = routeRequest(settings, endpoints(settings.baseUrl)[kind], {
+        signal, requestHeaders, method: kind === 'models' ? 'GET' : 'POST',
+        body: kind === 'models' ? undefined : JSON.stringify(makePayload(settings, prompt)),
+    });
     let response;
-    try { response = await fetchImpl(endpoints(settings.baseUrl)[kind], options); } catch (error) {
+    try { response = await fetchImpl(url, options); } catch (error) {
         if (signal?.aborted) throw error;
+        if ((settings.transport ?? DEFAULTS.transport) === 'server') throw new Error('无法连接酒馆后台代理。请检查酒馆登录、/proxy/ 转发配置和服务器日志。不会自动切换到浏览器直连。');
         throw new Error('无法连接 API。请检查地址、CLIProxyAPI 是否运行、CORS，以及 HTTPS 页面是否拦截了 HTTP 请求。手机上的 127.0.0.1 指向手机本身。');
     }
-    return readJson(response);
+    return readJson(response, { transport: settings.transport ?? DEFAULTS.transport });
 }
 
 export function decodeImage(base64) {
@@ -135,7 +187,7 @@ export function decodeImage(base64) {
     return { base64: raw, format, mime: format === 'jpg' ? 'image/jpeg' : `image/${format}` };
 }
 
-export async function extractImage(body, { fetchImpl = fetch, signal } = {}) {
+export async function extractImage(body, { fetchImpl = fetch, signal, settings = { transport: 'direct' }, requestHeaders = {} } = {}) {
     const item = body?.data?.[0];
     if (item?.b64_json) return decodeImage(item.b64_json);
     if (item?.url?.startsWith('data:image/')) return decodeImage(item.url);
@@ -143,9 +195,14 @@ export async function extractImage(body, { fetchImpl = fetch, signal } = {}) {
         let url;
         try { url = new URL(item.url); } catch { throw new Error('图片 URL 无效。'); }
         if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('图片 URL 必须是 HTTP/HTTPS；不能读取 file:// 本地路径。');
-        // Never forward the API credential to a returned image host.
-        const response = await fetchImpl(url.href, { signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
-        if (!response.ok) throw new Error(`下载生成图片失败：HTTP ${response.status}`);
+        // Use the same transport as generation, but never forward the API credential.
+        const request = routeRequest(settings, url.href, { signal, requestHeaders, withApiKey: false, accept: 'image/png,image/jpeg,image/webp' });
+        let response;
+        try { response = await fetchImpl(request.url, request.options); } catch (error) {
+            if (signal?.aborted) throw error;
+            throw new Error(settings.transport === 'server' ? '酒馆后台下载图片失败，请检查服务器到图片地址的连接。' : '下载图片失败，请检查图片地址的 CORS；建议使用酒馆后台转发。');
+        }
+        if (!response.ok) await readJson(response, { transport: settings.transport });
         if (Number(response.headers.get('content-length')) > 50 * 1024 * 1024) throw new Error('生成图片超过 50 MB。');
         const buffer = new Uint8Array(await response.arrayBuffer());
         if (buffer.length > 50 * 1024 * 1024) throw new Error('生成图片超过 50 MB。');

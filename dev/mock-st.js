@@ -16,7 +16,7 @@ const context = {
     eventSource: { on(type, fn) { if (!handlers.has(type)) handlers.set(type, new Set()); handlers.get(type).add(fn); }, removeListener(type, fn) { handlers.get(type)?.delete(fn); } },
     eventTypes: Object.fromEntries(['CHAT_CHANGED', 'MESSAGE_RECEIVED', 'MESSAGE_SENT', 'MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'GENERATION_ENDED'].map(key => [key, key])),
 };
-context.extensionSettings.tavern_image_bridge ??= { baseUrl: location.origin + '/v1' };
+context.extensionSettings.tavern_image_bridge ??= { baseUrl: location.origin + '/v1', transport: 'server' };
 function emit(type) { for (const handler of handlers.get(type) || []) handler(); }
 function render() {
     const chat = document.querySelector('#chat'); chat.replaceChildren();

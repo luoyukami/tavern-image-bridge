@@ -4,7 +4,7 @@ import { DEFAULTS, apiRequest, buildPrompt, captureTarget, decodeImage, endpoint
 import { createService, TargetChangedError } from '../service.js';
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=';
-const settings = { ...DEFAULTS, recentCount: 2, apiKey: 'test-secret' };
+const settings = { ...DEFAULTS, transport: 'direct', recentCount: 2, apiKey: 'test-secret' };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 function host(modern = true) {
     let saves = 0, renders = 0;
@@ -65,7 +65,7 @@ test('base64 and data URL decode; remote image download gets no API key or cooki
     assert.equal((await extractImage({ data: [{ url: `data:image/png;base64,${png}` }] })).base64, png);
     let options;
     const result = await extractImage({ data: [{ url: 'https://images.test/a.png' }] }, { fetchImpl: async (_, init) => { options = init; return new Response(Buffer.from(png, 'base64')); } });
-    assert.equal(result.format, 'png'); assert.equal(options.headers, undefined); assert.equal(options.credentials, 'omit');
+    assert.equal(result.format, 'png'); assert.equal(options.headers.Authorization, undefined); assert.equal(options.credentials, 'omit');
     await assert.rejects(extractImage({ data: [{ url: 'file:///tmp/result.png' }] }), /HTTP/);
 });
 

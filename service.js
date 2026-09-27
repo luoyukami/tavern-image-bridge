@@ -1,4 +1,4 @@
-import { KEY, apiRequest, buildPrompt, captureTarget, extractImage, readJson, resolveTargetIndex, targetStillValid, validateSettings } from './core.js';
+import { KEY, apiRequest, buildPrompt, captureTarget, createImageId, extractImage, readJson, resolveTargetIndex, targetStillValid, validateSettings } from './core.js';
 
 export class TargetChangedError extends Error {
     constructor() { super('原聊天或楼层已变化，图片已保留。可下载，或手动插入当前选择的楼层。'); this.name = 'TargetChangedError'; }
@@ -12,9 +12,10 @@ export function createService(getContext, fetchImpl = fetch) {
             const index = resolveTargetIndex(context.chat, requestedIndex);
             const target = captureTarget(context, index);
             const { prompt, count } = buildPrompt(context, settings, index);
-            const body = await apiRequest(settings, 'generate', { signal, prompt, fetchImpl });
-            const image = await extractImage(body, { signal, fetchImpl });
-            return { id: crypto.randomUUID(), image, target, count, model: settings.model, url: null, boundTarget: null, saved: false };
+            const requestHeaders = context.getRequestHeaders();
+            const body = await apiRequest(settings, 'generate', { signal, prompt, fetchImpl, requestHeaders });
+            const image = await extractImage(body, { signal, fetchImpl, settings, requestHeaders });
+            return { id: createImageId(), image, target, count, model: settings.model, url: null, boundTarget: null, saved: false };
         },
         async persist(result, signal) {
             if (result.url) return result.url;
