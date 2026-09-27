@@ -1,4 +1,4 @@
-#tib-root { position: fixed; right: 0; width: 68px; z-index: 2000; color: #f1eeea; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color-scheme: dark; }
+#tib-root { position: fixed; right: 0; width: 68px; z-index: 2000; color: #f1eeea; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color-scheme: dark; --tib-panel-gap: 24px; }
 #tib-root * { box-sizing: border-box; }
 #tib-root [hidden] { display: none !important; }
 #tib-root button, #tib-root input, #tib-root select, #tib-root textarea { font: inherit; }
@@ -7,12 +7,14 @@
 #tib-root button:disabled { opacity: .5; cursor: wait; }
 #tib-root :focus-visible { outline: 2px solid #e8b980; outline-offset: 3px; }
 #tib-root .tib-launcher { display: grid; place-items: center; width: 50px; height: 50px; padding: 12px; border-radius: 17px; background: #252526; border: 1px solid #b6936680; box-shadow: 0 5px 24px #0006; color: #edc18d; touch-action: none; transition: transform .32s ease, opacity .45s ease; position: relative; }
+/* Enlarged touch target: a finger does not have a mouse's aim, and it also covers the bare margin around the button. */
+#tib-root .tib-launcher::before { content: ''; position: absolute; inset: -6px -12px; }
 #tib-root .tib-launcher svg { width: 26px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 #tib-root.tib-docked .tib-launcher { transform: translateX(38px); opacity: .32; }
 #tib-root.tib-docked .tib-launcher:hover, #tib-root.tib-docked .tib-launcher:focus-visible { transform: none; opacity: 1; }
 #tib-root.tib-docked.tib-busy .tib-launcher { transform: translateX(24px); opacity: .72; }
 #tib-root .tib-busy-dot { position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: #e8b980; animation: tib-pulse 1.1s ease-in-out infinite alternate; }
-#tib-root .tib-panel { position: fixed; right: 84px; bottom: 24px; width: 410px; max-width: calc(100vw - 104px); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; border: 1px solid #bba3813d; border-radius: 20px; background: #202124f7; box-shadow: 0 20px 75px #0008; overflow: hidden; backdrop-filter: blur(18px); text-align: left; }
+#tib-root .tib-panel { position: fixed; right: 84px; top: 24px; width: 410px; max-width: calc(100vw - 104px); max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; border: 1px solid #bba3813d; border-radius: 20px; background: #202124f7; box-shadow: 0 20px 75px #0008; overflow: hidden; backdrop-filter: blur(18px); text-align: left; }
 #tib-root .tib-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 23px 13px; border-bottom: 1px solid #ffffff0d; flex: 0 0 auto; }
 #tib-root .tib-eyebrow { font-size: 9px; letter-spacing: 2.5px; color: #c4a17b; }
 #tib-root h2 { font-size: 20px; letter-spacing: 2px; font-weight: 600; margin: 2px 0 0; }
@@ -51,14 +53,15 @@
 #tib-root .tib-result-actions { display: flex; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
 @keyframes tib-pulse { to { opacity: .35; } }
 @media (max-width: 600px) {
-    #tib-root { right: 0; width: 62px; }
-    #tib-root .tib-panel { left: 10px; right: 10px; bottom: max(76px, env(safe-area-inset-bottom)); width: auto; max-width: none; max-height: calc(100dvh - 96px); border-radius: 16px; }
+    #tib-root { right: 0; width: 62px; --tib-panel-gap: 76px; }
+    #tib-root .tib-panel { left: 10px; right: 10px; top: 76px; width: auto; max-width: none; max-height: calc(100vh - 96px); max-height: calc(100dvh - 96px); border-radius: 16px; }
     #tib-root .tib-header { padding: 15px 17px 12px; }
     #tib-root .tib-body { padding: 12px 17px; }
     #tib-root .tib-footer { padding: 12px 17px 15px; }
     #tib-root input:not([type=checkbox]), #tib-root select, #tib-root textarea { font-size: 16px; }
-    #tib-root.tib-docked .tib-launcher { transform: translateX(34px); opacity: .28; }
-    #tib-root.tib-docked.tib-busy .tib-launcher { transform: translateX(22px); opacity: .72; }
+    /* Phones have no hover to wake the button, so the docked state stays readable and easy to hit. */
+    #tib-root.tib-docked .tib-launcher { transform: translateX(24px); opacity: .5; }
+    #tib-root.tib-docked.tib-busy .tib-launcher { transform: translateX(18px); opacity: .78; }
 }
 @media (prefers-reduced-motion: reduce) { #tib-root * { animation: none !important; transition: none !important; } }
 

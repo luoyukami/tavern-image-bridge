@@ -12,7 +12,8 @@ function mount() {
     const lifetime = new AbortController();
     const service = createService(getContext);
     let job = null, pending = null, previewUrl = null, hideTimer = null, clockTimer = null, selectedIndex = -1;
-    let opened = false, lastFocus = null, wasDragged = false, startedAt = 0, stoppedAt = 0, placeholder = null;
+    let opened = false, lastFocus = null, startedAt = 0, stoppedAt = 0, placeholder = null;
+    let drag = null, swallowClick = false, swallowClickUntil = 0;
 
     const root = document.createElement('div');
     root.id = 'tib-root';
@@ -70,6 +71,19 @@ function mount() {
         const fraction = Number.isFinite(settings.floatTop) ? settings.floatTop : 0.7;
         root.style.top = `${Math.max(12, Math.min(max, fraction * innerHeight))}px`;
     }
+    // SillyTavern's mobile CSS pins <body> with position:fixed (css/mobile-styles.css), which collapses
+    // <html> to zero height — and <html> stays the containing block for fixed elements because it carries
+    // a transform/perspective (public/style.css). A panel anchored with `bottom` is therefore laid out
+    // entirely above the viewport on phones (the launcher survives because it is anchored with `top`).
+    // So pin the panel from the top, using the live viewport height.
+    function placePanel() {
+        if (panel.hidden) return;
+        const gap = parseFloat(getComputedStyle(root).getPropertyValue('--tib-panel-gap')) || 24;
+        const viewport = Number.isFinite(globalThis.visualViewport?.height) && globalThis.visualViewport.height > 0
+            ? Math.min(innerHeight, globalThis.visualViewport.height)
+            : innerHeight;
+        panel.style.top = `${Math.max(8, viewport - gap - panel.offsetHeight)}px`;
+    }
     function wake() { clearTimeout(hideTimer); root.classList.remove('tib-docked'); }
     function scheduleHide() {
         clearTimeout(hideTimer);
@@ -77,6 +91,7 @@ function mount() {
     }
     function open() {
         opened = true; lastFocus = document.activeElement; panel.hidden = false;
+        placePanel();
         launcher.setAttribute('aria-expanded', 'true'); wake(); refreshTargets();
         $('[data-action="close"]').focus();
     }
@@ -242,8 +257,6 @@ function mount() {
     listen($('#tib-target'), 'change', event => { selectedIndex = Number(event.target.value); refreshPrompt(); });
     listen($('#tib-preview'), 'toggle', refreshPrompt);
     listen(root, 'click', event => {
-        // The hit area stays put while the docked button slides out on hover.
-        if (event.target === root && !opened) { open(); return; }
         const action = event.target.closest('[data-action]')?.dataset.action;
         if (action === 'close') close();
         if (action === 'cancel') job?.abort('user');
@@ -255,26 +268,44 @@ function mount() {
         }
         if (['generate', 'models', 'retry'].includes(action)) void run(action);
     });
-    listen(launcher, 'click', () => { if (wasDragged) { wasDragged = false; return; } opened ? close() : open(); });
+    listen(launcher, 'click', () => {
+        const swallowed = swallowClick && Date.now() < swallowClickUntil;
+        swallowClick = false;
+        if (!swallowed) opened ? close() : open();
+    });
     listen(root, 'pointerenter', wake); listen(root, 'pointerleave', scheduleHide);
     listen(root, 'focusin', wake); listen(root, 'focusout', () => setTimeout(scheduleHide, 0));
     listen(document, 'keydown', event => { if (event.key === 'Escape' && opened) { close(); event.stopPropagation(); } });
     listen(document, 'pointerdown', event => { if (opened && !root.contains(event.target)) close(); });
-    listen(window, 'resize', position);
-    let drag = null;
-    listen(launcher, 'pointerdown', event => {
+    listen(window, 'resize', () => { position(); placePanel(); });
+    const panelObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(placePanel) : null;
+    panelObserver?.observe(panel);
+    // The launcher is toggled on pointerup, not on click: a finger that drifts a few pixels
+    // must not lose the tap to the browser's compatibility click, and a real drag must not
+    // swallow the next tap. Touch pointers get the browser-grade slop (~10px), a mouse does not.
+    const DRAG_SLOP = { touch: 14, pen: 12, mouse: 4 };
+    listen(root, 'pointerdown', event => {
         if (event.button !== 0) return;
-        drag = { y: event.clientY, top: root.getBoundingClientRect().top }; wasDragged = false;
-        launcher.setPointerCapture(event.pointerId); wake();
+        const onLauncher = launcher.contains(event.target);
+        if (!onLauncher && event.target !== root) return;
+        drag = { y: event.clientY, top: root.getBoundingClientRect().top, slop: DRAG_SLOP[event.pointerType] || DRAG_SLOP.mouse, moved: false, onLauncher };
+        if (onLauncher) { try { launcher.setPointerCapture(event.pointerId); } catch { /* capture is optional: retargeting only helps the drag */ } }
+        wake();
     });
-    listen(launcher, 'pointermove', event => {
-        if (!drag) return;
+    listen(root, 'pointermove', event => {
+        if (!drag?.onLauncher) return;
         const delta = event.clientY - drag.y;
-        if (Math.abs(delta) > 5) wasDragged = true;
-        if (wasDragged) { settings.floatTop = Math.max(12, Math.min(innerHeight - 64, drag.top + delta)) / innerHeight; position(); }
+        if (Math.abs(delta) > drag.slop) drag.moved = true;
+        if (drag.moved) { settings.floatTop = Math.max(12, Math.min(innerHeight - 64, drag.top + delta)) / innerHeight; position(); }
     });
-    listen(launcher, 'pointerup', () => { if (drag && wasDragged) persistSettings(); drag = null; scheduleHide(); });
-    listen(launcher, 'pointercancel', () => { drag = null; });
+    listen(root, 'pointerup', () => {
+        if (!drag) return;
+        const moved = drag.moved; drag = null;
+        swallowClick = true; swallowClickUntil = Date.now() + 700; // this gesture is handled here; the click it also emits must not toggle twice
+        if (moved) { persistSettings(); scheduleHide(); return; }
+        opened ? close() : open();
+    });
+    listen(root, 'pointercancel', () => { drag = null; });
 
     const listeners = [];
     for (const name of ['CHAT_CHANGED', 'MESSAGE_RECEIVED', 'MESSAGE_SENT', 'MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'GENERATION_ENDED', 'GENERATION_STOPPED']) {
@@ -298,6 +329,7 @@ function mount() {
     position(); refreshTargets(); refreshTransportHint(); scheduleHide();
     mounted = { destroy() {
         job?.abort('disabled'); lifetime.abort(); clearTimeout(hideTimer); clearInterval(clockTimer); clearPlaceholder();
+        panelObserver?.disconnect();
         for (const [type, handler] of listeners) context.eventSource.removeListener?.(type, handler);
         if (previewUrl) URL.revokeObjectURL(previewUrl);
         root.remove(); entry.remove(); mounted = null;
