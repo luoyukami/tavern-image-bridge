@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1 — 2026-09-27
+
+- 修复：酒馆启用 HTTP Basic Auth 时，后台转发的 `Authorization` 请求头要同时承担酒馆登录与上游密钥，两者必然冲突（静默 401 + `WWW-Authenticate: Basic`）。server 模式改用 `x-api-key` 传递上游密钥（CLIProxyAPI 同时接受该头，Basic 会被忽略），`Authorization` 留给酒馆认证；浏览器直连仍使用 `Bearer`。
+- 修正 Basic Auth 相关提示文案，并同步调整 4 项传输层测试（25 项全部通过）。
+
 ## 1.1.0 — 2026-09-27
 
 - 新增“酒馆后台转发”，通过酒馆原生 `/proxy/` 访问 CLIProxyAPI，解决浏览器 localhost 指向错误设备、CORS 与混合内容限制。

@@ -113,7 +113,7 @@ async function readJson(response, { transport = 'direct' } = {}) {
     const text = await response.text();
     if (transport === 'server') {
         if (response.status === 401 && /\bbasic\b/i.test(response.headers.get('www-authenticate') || '')) {
-            throw new Error('酒馆或前置反代启用了 HTTP Basic Auth，与内置代理转发 API Key 的 Authorization 请求头冲突。请使用受保护的同源定向反代，或切换浏览器直连；不要关闭登录保护。');
+            throw new Error('酒馆或前置反代要求 HTTP Basic Auth，但这次 /proxy/ 请求没有带上酒馆登录凭据。请在浏览器中重新登录或刷新酒馆页面，并确认前置反代没有拦掉 /proxy/；不要关闭登录保护。');
         }
         if (response.status === 404 && /CORS proxy is disabled/i.test(text)) {
             throw new Error('酒馆后台代理尚未启用。请在酒馆实际使用的 config.yaml 中设置 enableCorsProxy: true，然后重启酒馆。无需修改 CLIProxyAPI 的 CORS。');
@@ -143,11 +143,15 @@ export function routeRequest(settings, target, { signal, method = 'GET', body, r
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('转发目标必须是无内嵌账号密码的 HTTP/HTTPS 地址。');
     const headers = { Accept: accept };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (withApiKey && settings.apiKey?.trim()) headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
+    // The native /proxy/ route sits behind SillyTavern's own HTTP Basic Auth, and the
+    // browser puts that login into the very same Authorization header. Server transport
+    // therefore sends the upstream key as x-api-key (accepted by CLIProxyAPI) and never
+    // touches Authorization; direct mode keeps the standard Bearer header.
+    if (withApiKey && settings.apiKey?.trim()) {
+        if (transport === 'server') headers['x-api-key'] = settings.apiKey.trim();
+        else headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
+    }
     if (transport === 'server') {
-        // Prevent the browser's cached HTTP Basic credentials from being forwarded
-        // to the upstream when the API is keyless or a returned image is downloaded.
-        headers.Authorization ??= 'Bearer';
         const csrf = new Headers(requestHeaders).get('X-CSRF-Token');
         if (csrf) headers['X-CSRF-Token'] = csrf;
     }

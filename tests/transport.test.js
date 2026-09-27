@@ -20,7 +20,8 @@ test('server model request is same-origin and retains ST session, with only requ
     await apiRequest(settings, 'models', { requestHeaders: stHeaders, fetchImpl: async (url, options) => { captured = { url, options }; return json({ data: [] }); } });
     assert.equal(captured.url, '/proxy/http%3A%2F%2F127.0.0.1%3A8317%2Fv1%2Fmodels');
     assert.equal(captured.options.credentials, 'same-origin');
-    assert.equal(captured.options.headers.Authorization, 'Bearer api-test-key');
+    assert.equal(captured.options.headers['x-api-key'], 'api-test-key');
+    assert.equal(captured.options.headers.Authorization, undefined);
     assert.equal(captured.options.headers['X-CSRF-Token'], 'st-csrf');
     assert.equal(captured.options.headers['X-Private-Header'], undefined);
     assert.equal(captured.options.body, undefined);
@@ -44,9 +45,10 @@ test('direct mode excludes ST credentials and leaves API URL absolute', () => {
     assert.equal(options.headers['X-Private-Header'], undefined);
 });
 
-test('keyless server requests cannot forward cached browser Basic authorization', () => {
+test('keyless server requests leave Authorization to SillyTavern and copy no ST credentials', () => {
     const { options } = routeRequest({ ...settings, apiKey: '' }, 'http://api.test/v1/models', { requestHeaders: stHeaders });
-    assert.equal(options.headers.Authorization, 'Bearer');
+    assert.equal(options.headers.Authorization, undefined);
+    assert.equal(options.headers['x-api-key'], undefined);
     assert.ok(!JSON.stringify(options).includes('private-login'));
 });
 
@@ -69,7 +71,7 @@ test('signed remote image URLs use server transport without sending the API key 
     const image = await extractImage({ data: [{ url: target }] }, { settings, requestHeaders: stHeaders, fetchImpl: async (url, options) => { captured = { url, options }; return new Response(Buffer.from(png, 'base64')); } });
     assert.equal(image.format, 'png');
     assert.equal(decodeURIComponent(captured.url.slice('/proxy/'.length)), target);
-    assert.equal(captured.options.headers.Authorization, 'Bearer');
+    assert.equal(captured.options.headers.Authorization, undefined);
     assert.equal(captured.options.credentials, 'same-origin');
     assert.equal(captured.options.headers['X-CSRF-Token'], 'st-csrf');
     assert.ok(!JSON.stringify(captured).includes('api-test-key'));
@@ -87,8 +89,9 @@ test('service routes generation and returned image through ST, then uses the loc
     const result = await service.generate(settings, -1); await service.persist(result);
     assert.equal(requests.length, 3);
     assert.ok(requests[0].url.startsWith('/proxy/')); assert.ok(requests[1].url.startsWith('/proxy/'));
-    assert.equal(requests[0].options.headers.Authorization, 'Bearer api-test-key');
-    assert.equal(requests[1].options.headers.Authorization, 'Bearer');
+    assert.equal(requests[0].options.headers['x-api-key'], 'api-test-key');
+    assert.equal(requests[0].options.headers.Authorization, undefined);
+    assert.equal(requests[1].options.headers.Authorization, undefined);
     assert.equal(requests[2].url, '/api/images/upload'); assert.equal(requests[2].options.headers.Authorization, undefined);
 });
 
