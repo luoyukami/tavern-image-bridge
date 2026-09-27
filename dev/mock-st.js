@@ -22,11 +22,12 @@ function render() {
     const chat = document.querySelector('#chat'); chat.replaceChildren();
     context.chat.forEach((message, index) => {
         const node = document.createElement('article'); node.className = 'mes'; node.setAttribute('mesid', index);
+        const block = document.createElement('div'); block.className = 'mes_block';
         const name = document.createElement('b'); name.textContent = `${message.name} · 第 ${index + 1} 层`;
         const text = document.createElement('div'); text.className = 'mes_text'; text.textContent = message.mes;
         const images = document.createElement('div'); images.className = 'mock-images';
         for (const media of message.extra?.media || []) { const image = new Image(); image.src = media.url; image.alt = '生成图片'; images.append(image); }
-        node.append(name, text, images); chat.append(node);
+        block.append(name, text, images); node.append(block); chat.append(node);
     });
 }
 window.qa = { context, saves: 0, savedChat: null, emit, render,

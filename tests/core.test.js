@@ -149,6 +149,9 @@ test('cancellation propagates and generation is not retried', async () => {
 test('auto trigger only fires for a fresh model reply and skips off, busy, stopped and illustrated floors', () => {
     const { ctx } = host();
     const on = { ...settings, autoTrigger: true };
+    // Off by default, including for settings saved before the switch existed.
+    assert.equal(DEFAULTS.autoTrigger, false);
+    assert.equal(planAutoGeneration({ ...DEFAULTS, ...{ baseUrl: 'http://127.0.0.1:8317/v1' } }, { chat: ctx.chat }).run, false);
     const plan = state => planAutoGeneration(on, { chat: ctx.chat, ...state });
     assert.deepEqual(planAutoGeneration(settings, { chat: ctx.chat }), { run: false, reason: '自动生图未开启' });
     assert.deepEqual(plan({ running: true }), { run: false, reason: '已有生图任务正在进行' });

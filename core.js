@@ -13,7 +13,7 @@ export const DEFAULT_PRESET = `请根据以下聊天情节，直接生成一张�
 export const DEFAULTS = Object.freeze({
     transport: 'server', baseUrl: 'http://127.0.0.1:8317/v1', apiKey: '', rememberKey: false,
     model: 'gpt-image-2.5', recentCount: 6, preset: DEFAULT_PRESET,
-    size: '1024x1024', quality: 'auto', timeoutSeconds: 600, autoHide: true,
+    size: '1024x1024', quality: 'auto', timeoutSeconds: 600, autoHide: true, autoTrigger: false,
     floatTop: 0.7,
 });
 

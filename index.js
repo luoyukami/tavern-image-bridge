@@ -12,7 +12,7 @@ function mount() {
     const lifetime = new AbortController();
     const service = createService(getContext);
     let job = null, pending = null, previewUrl = null, hideTimer = null, clockTimer = null, selectedIndex = -1;
-    let opened = false, lastFocus = null, wasDragged = false, startedAt = 0, stoppedAt = 0;
+    let opened = false, lastFocus = null, wasDragged = false, startedAt = 0, stoppedAt = 0, placeholder = null;
 
     const root = document.createElement('div');
     root.id = 'tib-root';
@@ -108,8 +108,47 @@ function mount() {
         for (const action of ['generate', 'models', 'retry', 'discard']) $(`[data-action="${action}"]`).disabled = value;
         $('[data-action="cancel"]').hidden = !value;
         $('.tib-busy-dot').hidden = !value;
+        root.classList.toggle('tib-busy', value);
         panel.setAttribute('aria-busy', String(value));
         if (!value) clearInterval(clockTimer);
+    }
+    // 等待期间只在正文里插一个纯展示的占位：不写聊天数据，图片就位前先占好位置。
+    function clearPlaceholder() {
+        clearInterval(placeholder?.timer);
+        placeholder?.node.remove();
+        placeholder = null;
+    }
+    function setPlaceholderLabel(text) {
+        if (placeholder) placeholder.text.data = text;
+    }
+    function showPlaceholder(index, text) {
+        clearPlaceholder();
+        const block = document.querySelector(`#chat .mes[mesid="${index}"]`)?.querySelector('.mes_block');
+        if (!block) return;
+        const node = document.createElement('div');
+        node.className = 'tib-placeholder';
+        node.setAttribute('role', 'status');
+        node.setAttribute('aria-live', 'polite');
+        const frame = document.createElement('div');
+        frame.className = 'tib-placeholder-frame';
+        // Reserve the final aspect ratio so the reply does not jump when the image lands.
+        frame.style.aspectRatio = String(settings.size).includes('x') ? settings.size.replace('x', ' / ') : '1 / 1';
+        const shimmer = document.createElement('span');
+        shimmer.className = 'tib-placeholder-shimmer';
+        const dots = document.createElement('span');
+        dots.className = 'tib-placeholder-dots';
+        dots.append(...Array.from({ length: 3 }, () => document.createElement('i')));
+        frame.append(shimmer, dots);
+        const label = document.createElement('div');
+        label.className = 'tib-placeholder-label';
+        const dot = document.createElement('i');
+        const textNode = document.createTextNode(text);
+        label.append(dot, textNode);
+        node.append(frame, label);
+        block.append(node);
+        const queuedAt = Date.now();
+        const timer = setInterval(() => setPlaceholderLabel(`${text} · ${Math.floor((Date.now() - queuedAt) / 1000)} 秒`), 1000);
+        placeholder = { node, text: textNode, timer };
     }
     function showResult(result) {
         if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -130,6 +169,7 @@ function mount() {
     }
     async function saveAndAttach(result, signal, manual = false) {
         status('图片已生成，正在保存到酒馆…');
+        setPlaceholderLabel('正在把插画保存到酒馆…');
         await service.persist(result, signal);
         signal?.throwIfAborted();
         let target = result.boundTarget || result.target;
@@ -169,14 +209,16 @@ function mount() {
             } else if (action === 'generate') {
                 if (pending && !pending.saved) throw new Error('上一张图片还未插入。请先使用“重试保存并插入”或“插入当前所选楼层”，以免丢失结果。');
                 persistSettings(); refreshPrompt(); startedAt = Date.now();
+                const floor = resolveTargetIndex(getContext().chat, targetIndex);
+                showPlaceholder(floor, `正在绘制插画 · ${config.model}`);
                 const showProgress = () => status(`${automatic ? '模型回复已结束，自动生成插画' : '正在生成场景插画'}… ${Math.floor((Date.now() - startedAt) / 1000)} 秒`);
                 showProgress(); clockTimer = setInterval(showProgress, 1000);
-                const result = await service.generate(config, targetIndex, controller.signal);
+                const result = await service.generate(config, floor, controller.signal);
                 pending = result; clearInterval(clockTimer); showResult(result);
                 await saveAndAttach(result, controller.signal);
             }
         } catch (error) { showFailure(error, config, controller); }
-        finally { clearTimeout(timeout); job = null; setBusy(false); }
+        finally { clearPlaceholder(); clearTimeout(timeout); job = null; setBusy(false); }
     }
 
     async function autoRun() {
@@ -239,7 +281,7 @@ function mount() {
         const type = context.eventTypes?.[name];
         if (!type) continue;
         const handler = () => {
-            if (name === 'CHAT_CHANGED') selectedIndex = -1;
+            if (name === 'CHAT_CHANGED') { selectedIndex = -1; clearPlaceholder(); }
             if (name === 'GENERATION_STOPPED') stoppedAt = Date.now();
             // ST emits GENERATION_ENDED from hideStopButton(), which stopGeneration() also calls,
             // and GENERATION_STOPPED follows in the same tick: defer so a manual stop wins.
@@ -255,7 +297,7 @@ function mount() {
     listen(entry, 'click', open);
     position(); refreshTargets(); refreshTransportHint(); scheduleHide();
     mounted = { destroy() {
-        job?.abort('disabled'); lifetime.abort(); clearTimeout(hideTimer); clearInterval(clockTimer);
+        job?.abort('disabled'); lifetime.abort(); clearTimeout(hideTimer); clearInterval(clockTimer); clearPlaceholder();
         for (const [type, handler] of listeners) context.eventSource.removeListener?.(type, handler);
         if (previewUrl) URL.revokeObjectURL(previewUrl);
         root.remove(); entry.remove(); mounted = null;
