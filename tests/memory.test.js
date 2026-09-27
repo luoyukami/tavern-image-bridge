@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULTS, endpoints } from '../core.js';
 import {
-    MEMORY_KEY, NO_UPDATE, buildMemoryDiffMessages, buildMemorySummaryMessages, buildPrompt, describeMemory,
-    extractChatText, formatAppearanceBlock, memoryConnection, memoryRequest, mergeEntries, normalizeMemory,
-    parentArchive, parseAppearance, parseMemoryDiff, planMemoryDiff, rememberArchive, speakerNames,
-    userIdentities, validateMemorySettings,
+    MEMORY_DIFF_SYSTEM, MEMORY_KEY, MEMORY_SUMMARY_SYSTEM, NO_UPDATE, buildMemoryDiffMessages,
+    buildMemorySummaryMessages, buildPrompt, describeMemory, extractChatText, formatAppearanceBlock,
+    memoryConnection, memoryRequest, mergeEntries, normalizeMemory, parentArchive, parseAppearance,
+    parseMemoryDiff, planMemoryDiff, rememberArchive, speakerNames, userIdentities, validateMemorySettings,
 } from '../memory.js';
 import { createService } from '../service.js';
 
@@ -201,6 +201,33 @@ test('memory requests use the chat endpoint, the memory model, and the right cre
     assert.equal(calls[1].init.headers.Authorization, 'Bearer test-secret');
     await assert.rejects(memoryRequest(settings, { messages: [], fetchImpl: async () => new Response('<html>', { status: 502 }) }), /没有返回 JSON/);
     await assert.rejects(memoryRequest({ ...settings, memoryModel: '' }, { messages: [], fetchImpl }), /文字模型/);
+});
+
+test('prompts keep the archive to stable features and exclude fleeting state', () => {
+    const summary = MEMORY_SUMMARY_SYSTEM;
+    // Scope: body features and worn items only.
+    assert.match(summary, /固定外形特征/);
+    assert.match(summary, /发色与发型、瞳色、肤色、身高与体型/);
+    assert.match(summary, /上衣、下装、外套、鞋、帽子、手套、围巾/);
+    // Excluded: temporary state, carried props, scene, user persona.
+    for (const forbidden of ['新伤口、绷带、血迹、污泥、雨水、汗水、妆容', '随身物品与手持道具', '天气、环境、剧情、对白', '用户（{{user}}）的外形']) {
+        assert.ok(summary.includes(forbidden), `summary prompt must exclude: ${forbidden}`);
+    }
+    assert.match(summary, /不要写「未明确」/);
+    assert.match(summary, /不超过 80 字/);
+    const diff = MEMORY_DIFF_SYSTEM;
+    assert.match(diff, /只有这些算变化/);
+    assert.match(diff, /换衣、脱衣、穿上或脱下外套、换鞋、摘下或戴上配饰/);
+    assert.match(diff, /剪发、染发、新增永久疤痕或纹身/);
+    assert.match(diff, /这些不算变化/);
+    assert.match(diff, /淋湿、沾血、脏污、出汗、脸红、新伤口与包扎/);
+    assert.match(diff, /哪怕用户换了衣服也不要输出/);
+    assert.match(diff, /替换整条档案的完整新描述/);
+    assert.match(diff, /不超过 80 字/);
+    assert.ok(diff.includes(NO_UPDATE));
+    // The example must not teach noise back in.
+    assert.ok(!/酒渍|铜灯|划痕|沾泥/.test(summary));
+    assert.ok(!/酒渍|铜灯|划痕|沾泥/.test(diff));
 });
 
 test('service.summarize and service.diff maintain the archive and never block on the user persona', async () => {

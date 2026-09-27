@@ -59,7 +59,7 @@ function mount() {
           <div id="tib-result" class="tib-result" hidden><a id="tib-image-link" target="_blank" rel="noopener"><img id="tib-image" alt="本次生成的场景插画"></a><div class="tib-result-actions"><a id="tib-download" class="tib-secondary" download>下载图片</a><button type="button" data-action="retry" class="tib-secondary" hidden>重试保存并插入</button><button type="button" data-action="discard" class="tib-secondary" title="清除内存中的结果；不删除已保存的图片">清除预览</button></div></div>
           </section>
           <section id="tib-pane-memory" class="tib-pane" role="tabpanel" aria-labelledby="tib-tab-memory" hidden>
-            <p class="tib-intro">用一个文字模型把角色此刻的外形记成档案。生图时把它作为保底一起发送，最近几层没写穿着也不会跑偏。</p>
+            <p class="tib-intro">把角色的固定外形（身体特征 + 常穿衣物/配饰）记成档案，生图时作为保底一起发送。临时的伤势、污渍、表情和随身物品不会收进来，免得干扰作画。</p>
             <div class="tib-section-label">总结模型</div>
             <label for="tib-memory-url">API 地址</label><input id="tib-memory-url" data-setting="memoryBaseUrl" type="url" placeholder="留空 = 沿用生图的地址" spellcheck="false" autocomplete="off">
             <label for="tib-memory-key">API Key</label><input id="tib-memory-key" data-setting="memoryApiKey" type="password" placeholder="留空 = 沿用生图的密钥" autocomplete="off" spellcheck="false">
