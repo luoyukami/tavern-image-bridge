@@ -1,4 +1,5 @@
 const handlers = new Map();
+let chatMetadata = {};
 const baseChat = [
     { name: '莉娅', mes: '雨水沿着酒馆的玻璃窗缓缓滑落。壁炉里跳动着暖橙色的火光，我放下手中的书，抬头看向被推开的木门。', extra: {}, swipe_id: 0, swipe_info: [{ extra: {} }] },
     { name: '旅行者', mes: '我收起沾满雨水的深色斗篷，走到壁炉边。“今晚还有空房吗？”', is_user: true, extra: {} },
@@ -8,6 +9,10 @@ const context = {
     chat: structuredClone(baseChat), chatId: 'rainy-tavern', characterId: 0, groupId: null,
     characters: [{ name: '莉娅', avatar: 'lia.png' }], name1: '旅行者', name2: '莉娅',
     extensionSettings: JSON.parse(localStorage.getItem('mock-settings') || '{}'),
+    // Mirrors SillyTavern: chat_metadata is replaced wholesale, never mutated in place.
+    get chatMetadata() { return chatMetadata; },
+    updateChatMetadata(values, reset) { chatMetadata = reset ? { ...values } : { ...chatMetadata, ...values }; },
+    saveMetadataDebounced() { qa.metadataSaves++; },
     saveSettingsDebounced() { localStorage.setItem('mock-settings', JSON.stringify(this.extensionSettings)); },
     async saveChat() { qa.saves++; qa.savedChat = structuredClone(this.chat); },
     getRequestHeaders() { return { 'Content-Type': 'application/json', 'X-CSRF-Token': 'mock-csrf' }; },
@@ -30,7 +35,7 @@ function render() {
         block.append(name, text, images); node.append(block); chat.append(node);
     });
 }
-window.qa = { context, saves: 0, savedChat: null, emit, render,
+window.qa = { context, saves: 0, savedChat: null, emit, render, metadataSaves: 0,
     // Mirrors SillyTavern: the reply lands in the chat first, then GENERATION_ENDED fires.
     reply(text = '雨声更密了。我把铜灯往你那边推了推，火光在杯沿上晃了一下。') {
         context.chat.push({ name: context.name2, mes: text, extra: {}, swipe_id: 0, swipe_info: [{ extra: {} }] });
@@ -38,7 +43,7 @@ window.qa = { context, saves: 0, savedChat: null, emit, render,
     },
     // Mirrors stopGeneration(): GENERATION_ENDED still fires, then GENERATION_STOPPED in the same tick.
     stopGeneration() { emit('GENERATION_ENDED', context.chat.length); emit('GENERATION_STOPPED'); },
-    switchChat() { context.chatId = context.chatId === 'rainy-tavern' ? 'other-chat' : 'rainy-tavern'; context.chat = structuredClone(baseChat); emit('CHAT_CHANGED'); render(); },
+    switchChat() { context.chatId = context.chatId === 'rainy-tavern' ? 'other-chat' : 'rainy-tavern'; context.chat = structuredClone(baseChat); chatMetadata = {}; emit('CHAT_CHANGED'); render(); },
 };
 window.SillyTavern = { getContext: () => context };
 render();

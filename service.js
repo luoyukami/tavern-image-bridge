@@ -1,4 +1,9 @@
-import { KEY, apiRequest, buildPrompt, captureTarget, createImageId, extractImage, readJson, resolveTargetIndex, targetStillValid, validateSettings } from './core.js';
+import { KEY, apiRequest, captureTarget, createImageId, extractImage, readJson, resolveTargetIndex, targetStillValid, validateSettings } from './core.js';
+import {
+    buildMemoryDiffMessages, buildMemorySummaryMessages, buildPrompt, describeMemory, extractChatText,
+    memoryConnection, memoryRequest, mergeEntries, normalizeMemory, parseAppearance, parseMemoryDiff,
+    speakerNames, userIdentities, validateMemorySettings,
+} from './memory.js';
 
 export class TargetChangedError extends Error {
     constructor() { super('原聊天或楼层已变化，图片已保留。可下载，或手动插入当前选择的楼层。'); this.name = 'TargetChangedError'; }
@@ -6,17 +11,40 @@ export class TargetChangedError extends Error {
 
 export function createService(getContext, fetchImpl = fetch) {
     return {
-        async generate(settings, requestedIndex, signal) {
+        // 生图：档案在这里被快照，所以形象总结/diff 与生图互不阻塞，
+        // 本次请求用的是"点下按钮那一刻"的档案。
+        async generate(settings, requestedIndex, signal, memory = null) {
             validateSettings(settings);
             const context = getContext();
             const index = resolveTargetIndex(context.chat, requestedIndex);
             const target = captureTarget(context, index);
-            const { prompt, count } = buildPrompt(context, settings, index);
+            const { prompt, count } = buildPrompt(context, settings, index, memory);
             const requestHeaders = context.getRequestHeaders();
             const body = await apiRequest(settings, 'generate', { signal, prompt, fetchImpl, requestHeaders });
             const image = await extractImage(body, { signal, fetchImpl, settings, requestHeaders });
             return { id: createImageId(), image, target, count, model: settings.model, url: null, boundTarget: null, saved: false };
         },
+        // 总结请求：给最近 N 层，让模型产出完整的角色形象档案。
+        async summarize(settings, signal) {
+            const connection = validateMemorySettings(settings);
+            const context = getContext();
+            const { messages, index, count } = buildMemorySummaryMessages(context, settings);
+            const body = await memoryRequest(settings, { messages, signal, fetchImpl, requestHeaders: context.getRequestHeaders() });
+            const entries = parseAppearance(extractChatText(body), { exclude: userIdentities(context), speakers: speakerNames(context.chat) });
+            return { entries, index, count, model: connection.model, kind: 'summary' };
+        },
+        // diff 请求：只用最新一层回复对比现有档案，返回 NoUpdate 表示不需要改动。
+        async diff(settings, memory, signal) {
+            const connection = validateMemorySettings(settings);
+            const context = getContext();
+            const { messages, index, text } = buildMemoryDiffMessages(context, settings, memory);
+            const body = await memoryRequest(settings, { messages, signal, fetchImpl, requestHeaders: context.getRequestHeaders() });
+            const result = parseMemoryDiff(extractChatText(body), { exclude: userIdentities(context), speakers: speakerNames(context.chat) });
+            if (!result.updated) return { updated: false, entries: {}, index, text, model: connection.model, kind: 'diff' };
+            const entries = mergeEntries(normalizeMemory(memory).entries, result.entries);
+            return { updated: true, entries, changed: Object.keys(result.entries), index, text, model: connection.model, kind: 'diff' };
+        },
+        describeMemory,
         async persist(result, signal) {
             if (result.url) return result.url;
             const folder = result.target.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80) || 'Tavern';

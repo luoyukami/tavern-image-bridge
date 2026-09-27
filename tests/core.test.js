@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULTS, apiRequest, buildPrompt, captureTarget, decodeImage, endpoints, extractImage, planAutoGeneration, safeError, targetStillValid } from '../core.js';
+import { DEFAULTS, apiRequest, captureTarget, decodeImage, endpoints, extractImage, planAutoGeneration, safeError, targetStillValid } from '../core.js';
+import { buildPrompt } from '../memory.js';
 import { createService, TargetChangedError } from '../service.js';
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=';

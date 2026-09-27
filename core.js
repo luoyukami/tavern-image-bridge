@@ -13,6 +13,9 @@ export const DEFAULT_PRESET = `请根据以下聊天情节，直接生成一张�
 export const DEFAULTS = Object.freeze({
     transport: 'server', baseUrl: 'http://127.0.0.1:8317/v1', apiKey: '', rememberKey: false,
     model: 'gpt-image-2.5', recentCount: 6, preset: DEFAULT_PRESET,
+    memoryModel: '', memoryBaseUrl: '', memoryApiKey: '', memoryRememberKey: false,
+    memoryFloors: 40, memoryTimeoutSeconds: 180, memoryAuto: true, memoryInject: true,
+    memoryByChat: {}, activeTab: 'image',
     size: '1024x1024', quality: 'auto', timeoutSeconds: 600, autoHide: true, autoTrigger: false,
     floatTop: 0.7,
 });
@@ -20,7 +23,7 @@ export const DEFAULTS = Object.freeze({
 export function loadSettings(stored = {}) {
     // Preserve the network location deliberately configured by existing 1.0 users.
     const transport = stored.transport ?? (Object.keys(stored).length ? 'direct' : DEFAULTS.transport);
-    return { ...DEFAULTS, ...stored, transport, apiKey: stored.rememberKey ? stored.apiKey || '' : '' };
+    return { ...DEFAULTS, ...stored, transport, apiKey: stored.rememberKey ? stored.apiKey || '' : '', memoryApiKey: stored.memoryRememberKey ? stored.memoryApiKey || '' : '' };
 }
 
 export function createImageId(cryptoApi = globalThis.crypto) {
@@ -39,7 +42,7 @@ export function endpoints(input) {
     if (/\/(chat\/completions|responses|models)$/.test(path)) throw new Error('请填写 API 基础地址 /v1 或完整的 /v1/images/generations。');
     if (path.endsWith('/images/generations')) path = path.slice(0, -'/images/generations'.length);
     if (!path) path = '/v1';
-    return { generate: `${url.origin}${path}/images/generations`, models: `${url.origin}${path}/models` };
+    return { generate: `${url.origin}${path}/images/generations`, models: `${url.origin}${path}/models`, chat: `${url.origin}${path}/chat/completions` };
 }
 
 export function validateSettings(settings) {
@@ -83,18 +86,6 @@ export function planAutoGeneration(settings, { chat = [], running = false, pendi
     if (row.message.is_user) return { run: false, reason: '最新楼层不是模型回复' };
     if (Array.isArray(row.message.extra?.[KEY]) && row.message.extra[KEY].length) return { run: false, reason: '最新楼层已有插画' };
     return { run: true, index: row.index };
-}
-
-export function buildPrompt(context, settings, targetIndex) {
-    const rows = eligibleMessages(context.chat, targetIndex).slice(-Number(settings.recentCount));
-    const chat = rows.map(({ message, index, text }) => `[第 ${index + 1} 层 · ${message.name || (message.is_user ? context.name1 : context.name2) || '角色'}]\n${text}`).join('\n\n');
-    const values = { chat, char: context.name2 || '角色', user: context.name1 || '用户' };
-    const preset = String(settings.preset ?? '').trim();
-    let prompt = preset.replace(/\{\{(chat|char|user)\}\}/g, (_, key) => values[key]);
-    if (!preset.includes('{{chat}}')) prompt += `\n\n【聊天情节】\n${chat}`;
-    prompt = prompt.trim();
-    if (prompt.length > 32000) throw new Error(`发送内容共 ${prompt.length} 字符，超过 32000 字符；请减少聊天层数或缩短预设。`);
-    return { prompt, count: rows.length, indices: rows.map(row => row.index) };
 }
 
 export function chatIdentity(context) {
