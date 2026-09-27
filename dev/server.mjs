@@ -23,14 +23,14 @@ const server = http.createServer(async (req, res) => {
         state.proxyRequests.push({ target: target.href, method: req.method });
         const headers = {};
         // Model ST's removal of Cookie, CSRF and other browser-specific headers.
-        for (const key of ['accept', 'authorization', 'content-type']) if (req.headers[key]) headers[key] = req.headers[key];
+        for (const key of ['accept', 'authorization', 'content-type', 'x-api-key']) if (req.headers[key]) headers[key] = req.headers[key];
         try {
             const upstream = await fetch(target, { method: req.method, headers, body: req.method === 'POST' ? JSON.stringify(body) : undefined });
             res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('content-type') || 'application/octet-stream' });
             return res.end(Buffer.from(await upstream.arrayBuffer()));
         } catch { return reply({ error: 'Mock upstream unavailable' }, 502); }
     }
-    if (pathname.startsWith('/v1/') || pathname === '/mock-image') state.upstreamHeaders.push({ path: pathname, hasCookie: Boolean(req.headers.cookie), hasCsrf: Boolean(req.headers['x-csrf-token']), authorization: req.headers.authorization ? (req.headers.authorization === 'Bearer' ? 'empty-bearer' : 'present') : 'none' });
+    if (pathname.startsWith('/v1/') || pathname === '/mock-image') state.upstreamHeaders.push({ path: pathname, hasCookie: Boolean(req.headers.cookie), hasCsrf: Boolean(req.headers['x-csrf-token']), apiKey: req.headers['x-api-key'] ? 'present' : 'none', authorization: req.headers.authorization ? (req.headers.authorization === 'Bearer' ? 'empty-bearer' : 'present') : 'none' });
     if (pathname === '/mock-image') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(Buffer.from(pixel, 'base64')); }
     if (pathname === '/v1/models') return reply({ data: [{ id: 'gpt-image-2.5' }, { id: 'gpt-image-2.5-flare' }, { id: 'gpt-image-2.5-sunburst' }] });
     if (pathname === '/v1/images/generations') {

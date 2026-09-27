@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULTS, apiRequest, buildPrompt, captureTarget, decodeImage, endpoints, extractImage, safeError, targetStillValid } from '../core.js';
+import { DEFAULTS, apiRequest, buildPrompt, captureTarget, decodeImage, endpoints, extractImage, planAutoGeneration, safeError, targetStillValid } from '../core.js';
 import { createService, TargetChangedError } from '../service.js';
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=';
@@ -144,4 +144,29 @@ test('cancellation propagates and generation is not retried', async () => {
     const controller = new AbortController(); controller.abort(); let calls = 0;
     await assert.rejects(apiRequest(settings, 'generate', { signal: controller.signal, fetchImpl: async (_, init) => { calls++; init.signal.throwIfAborted(); } }), { name: 'AbortError' });
     assert.equal(calls, 1);
+});
+
+test('auto trigger only fires for a fresh model reply and skips off, busy, stopped and illustrated floors', () => {
+    const { ctx } = host();
+    const on = { ...settings, autoTrigger: true };
+    const plan = state => planAutoGeneration(on, { chat: ctx.chat, ...state });
+    assert.deepEqual(planAutoGeneration(settings, { chat: ctx.chat }), { run: false, reason: '自动生图未开启' });
+    assert.deepEqual(plan({ running: true }), { run: false, reason: '已有生图任务正在进行' });
+    assert.deepEqual(plan({ pending: true }), { run: false, reason: '上一张图片尚未插入楼层' });
+    assert.deepEqual(plan({ stopped: true }), { run: false, reason: '本次生成已停止' });
+    assert.deepEqual(planAutoGeneration(on, { chat: [] }), { run: false, reason: '没有可用的聊天楼层' });
+    // The newest eligible floor is the user's own message: nothing to illustrate yet.
+    assert.deepEqual(plan({}), { run: false, reason: '最新楼层不是模型回复' });
+    // A fresh model reply becomes the target; trailing system and empty floors are ignored.
+    ctx.chat.push({ name: '莉娅', mes: '火光落在杯沿上。', extra: {}, swipe_id: 0, swipe_info: [{ extra: {} }] });
+    ctx.chat.push({ is_system: true, mes: 'do not illustrate' }, { name: '莉娅', mes: '   ' });
+    assert.deepEqual(plan({}), { run: true, index: 2 });
+    // Once that floor carries an illustration the trigger stops duplicating paid generations.
+    ctx.chat[2].extra.tavern_image_bridge = [{ id: 'first', url: '/user/images/a.png' }];
+    assert.deepEqual(plan({}), { run: false, reason: '最新楼层已有插画' });
+    ctx.chat[2].extra.tavern_image_bridge = [];
+    assert.deepEqual(plan({}), { run: true, index: 2 });
+    // Switched chats and regenerated floors that lost their text are not eligible either.
+    ctx.chat[2].mes = '';
+    assert.deepEqual(plan({}), { run: false, reason: '最新楼层不是模型回复' });
 });

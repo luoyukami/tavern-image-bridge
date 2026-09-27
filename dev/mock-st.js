@@ -14,10 +14,10 @@ const context = {
     ensureMessageMediaIsArray(message) { message.extra.media ??= []; },
     updateMessageBlock() { render(); },
     eventSource: { on(type, fn) { if (!handlers.has(type)) handlers.set(type, new Set()); handlers.get(type).add(fn); }, removeListener(type, fn) { handlers.get(type)?.delete(fn); } },
-    eventTypes: Object.fromEntries(['CHAT_CHANGED', 'MESSAGE_RECEIVED', 'MESSAGE_SENT', 'MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'GENERATION_ENDED'].map(key => [key, key])),
+    eventTypes: Object.fromEntries(['CHAT_CHANGED', 'MESSAGE_RECEIVED', 'MESSAGE_SENT', 'MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'GENERATION_ENDED', 'GENERATION_STOPPED'].map(key => [key, key])),
 };
 context.extensionSettings.tavern_image_bridge ??= { baseUrl: location.origin + '/v1', transport: 'server' };
-function emit(type) { for (const handler of handlers.get(type) || []) handler(); }
+function emit(type, ...args) { for (const handler of handlers.get(type) || []) handler(...args); }
 function render() {
     const chat = document.querySelector('#chat'); chat.replaceChildren();
     context.chat.forEach((message, index) => {
@@ -30,8 +30,17 @@ function render() {
     });
 }
 window.qa = { context, saves: 0, savedChat: null, emit, render,
+    // Mirrors SillyTavern: the reply lands in the chat first, then GENERATION_ENDED fires.
+    reply(text = '雨声更密了。我把铜灯往你那边推了推，火光在杯沿上晃了一下。') {
+        context.chat.push({ name: context.name2, mes: text, extra: {}, swipe_id: 0, swipe_info: [{ extra: {} }] });
+        render(); emit('MESSAGE_RECEIVED', context.chat.length - 1, 'normal'); emit('GENERATION_ENDED', context.chat.length);
+    },
+    // Mirrors stopGeneration(): GENERATION_ENDED still fires, then GENERATION_STOPPED in the same tick.
+    stopGeneration() { emit('GENERATION_ENDED', context.chat.length); emit('GENERATION_STOPPED'); },
     switchChat() { context.chatId = context.chatId === 'rainy-tavern' ? 'other-chat' : 'rainy-tavern'; context.chat = structuredClone(baseChat); emit('CHAT_CHANGED'); render(); },
 };
 window.SillyTavern = { getContext: () => context };
 render();
+document.querySelector('#sim-reply')?.addEventListener('click', () => qa.reply());
+document.querySelector('#sim-stop')?.addEventListener('click', () => qa.stopGeneration());
 await import('../index.js');

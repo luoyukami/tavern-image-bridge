@@ -73,6 +73,18 @@ export function resolveTargetIndex(chat, requested = -1) {
     return index;
 }
 
+export function planAutoGeneration(settings, { chat = [], running = false, pending = false, stopped = false } = {}) {
+    if (!settings?.autoTrigger) return { run: false, reason: '自动生图未开启' };
+    if (running) return { run: false, reason: '已有生图任务正在进行' };
+    if (pending) return { run: false, reason: '上一张图片尚未插入楼层' };
+    if (stopped) return { run: false, reason: '本次生成已停止' };
+    const row = eligibleMessages(chat).at(-1);
+    if (!row) return { run: false, reason: '没有可用的聊天楼层' };
+    if (row.message.is_user) return { run: false, reason: '最新楼层不是模型回复' };
+    if (Array.isArray(row.message.extra?.[KEY]) && row.message.extra[KEY].length) return { run: false, reason: '最新楼层已有插画' };
+    return { run: true, index: row.index };
+}
+
 export function buildPrompt(context, settings, targetIndex) {
     const rows = eligibleMessages(context.chat, targetIndex).slice(-Number(settings.recentCount));
     const chat = rows.map(({ message, index, text }) => `[第 ${index + 1} 层 · ${message.name || (message.is_user ? context.name1 : context.name2) || '角色'}]\n${text}`).join('\n\n');

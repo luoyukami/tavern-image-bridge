@@ -1,4 +1,4 @@
-import { KEY, apiRequest, buildPrompt, captureTarget, eligibleMessages, loadSettings, resolveTargetIndex, safeError } from './core.js';
+import { KEY, apiRequest, buildPrompt, captureTarget, eligibleMessages, loadSettings, planAutoGeneration, resolveTargetIndex, safeError } from './core.js';
 import { createService, TargetChangedError } from './service.js';
 
 let mounted;
@@ -12,7 +12,7 @@ function mount() {
     const lifetime = new AbortController();
     const service = createService(getContext);
     let job = null, pending = null, previewUrl = null, hideTimer = null, clockTimer = null, selectedIndex = -1;
-    let opened = false, lastFocus = null, wasDragged = false, startedAt = 0;
+    let opened = false, lastFocus = null, wasDragged = false, startedAt = 0, stoppedAt = 0;
 
     const root = document.createElement('div');
     root.id = 'tib-root';
@@ -35,6 +35,7 @@ function mount() {
           <div class="tib-section-label">场景</div>
           <div class="tib-columns"><div><label for="tib-count">最近聊天层数</label><input id="tib-count" data-setting="recentCount" type="number" min="1" max="100" step="1"></div><div><label for="tib-target">图片插入楼层</label><select id="tib-target" aria-describedby="tib-context-info"></select></div></div>
           <p id="tib-context-info" class="tib-hint"></p>
+          <label class="tib-check"><input data-setting="autoTrigger" type="checkbox">模型回复结束后自动生图<span>插入刚生成的楼层；该层已有插画、正在生成或上次结果未插入时自动跳过</span></label>
           <label for="tib-preset">生图预设</label><textarea id="tib-preset" data-setting="preset" rows="7" spellcheck="false"></textarea>
           <p class="tib-hint">可用 {{chat}}、{{char}}、{{user}}。不写 {{chat}} 时，聊天会自动追加到预设末尾。</p>
           <details class="tib-details"><summary>图片与悬浮设置</summary><div class="tib-columns">
@@ -149,7 +150,7 @@ function mount() {
         } else status(safeError(error, config.apiKey), 'error');
         updateRetryLabel();
     }
-    async function run(action) {
+    async function run(action, targetIndex = selectedIndex, automatic = false) {
         if (job) return;
         const config = { ...settings };
         const controller = new AbortController(); job = controller; setBusy(true);
@@ -168,14 +169,24 @@ function mount() {
             } else if (action === 'generate') {
                 if (pending && !pending.saved) throw new Error('上一张图片还未插入。请先使用“重试保存并插入”或“插入当前所选楼层”，以免丢失结果。');
                 persistSettings(); refreshPrompt(); startedAt = Date.now();
-                const showProgress = () => status(`正在生成场景插画… ${Math.floor((Date.now() - startedAt) / 1000)} 秒`);
+                const showProgress = () => status(`${automatic ? '模型回复已结束，自动生成插画' : '正在生成场景插画'}… ${Math.floor((Date.now() - startedAt) / 1000)} 秒`);
                 showProgress(); clockTimer = setInterval(showProgress, 1000);
-                const result = await service.generate(config, selectedIndex, controller.signal);
+                const result = await service.generate(config, targetIndex, controller.signal);
                 pending = result; clearInterval(clockTimer); showResult(result);
                 await saveAndAttach(result, controller.signal);
             }
         } catch (error) { showFailure(error, config, controller); }
         finally { clearTimeout(timeout); job = null; setBusy(false); }
+    }
+
+    async function autoRun() {
+        if (!mounted) return;
+        const plan = planAutoGeneration(settings, {
+            chat: getContext().chat, running: Boolean(job),
+            pending: Boolean(pending && !pending.saved), stopped: Date.now() - stoppedAt < 1500,
+        });
+        if (!plan.run) return;
+        await run('generate', plan.index, true);
     }
 
     for (const input of root.querySelectorAll('[data-setting]')) {
@@ -224,10 +235,17 @@ function mount() {
     listen(launcher, 'pointercancel', () => { drag = null; });
 
     const listeners = [];
-    for (const name of ['CHAT_CHANGED', 'MESSAGE_RECEIVED', 'MESSAGE_SENT', 'MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'GENERATION_ENDED']) {
+    for (const name of ['CHAT_CHANGED', 'MESSAGE_RECEIVED', 'MESSAGE_SENT', 'MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'GENERATION_ENDED', 'GENERATION_STOPPED']) {
         const type = context.eventTypes?.[name];
         if (!type) continue;
-        const handler = () => { if (name === 'CHAT_CHANGED') selectedIndex = -1; if (opened) refreshTargets(); };
+        const handler = () => {
+            if (name === 'CHAT_CHANGED') selectedIndex = -1;
+            if (name === 'GENERATION_STOPPED') stoppedAt = Date.now();
+            // ST emits GENERATION_ENDED from hideStopButton(), which stopGeneration() also calls,
+            // and GENERATION_STOPPED follows in the same tick: defer so a manual stop wins.
+            if (name === 'GENERATION_ENDED') setTimeout(() => void autoRun(), 0);
+            if (opened) refreshTargets();
+        };
         context.eventSource.on(type, handler); listeners.push([type, handler]);
     }
     const entry = document.createElement('button');
