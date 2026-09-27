@@ -15,7 +15,7 @@ export const DEFAULTS = Object.freeze({
     model: 'gpt-image-2.5', recentCount: 6, preset: DEFAULT_PRESET,
     memoryModel: '', memoryBaseUrl: '', memoryApiKey: '', memoryRememberKey: false,
     memoryFloors: 40, memoryTimeoutSeconds: 180, memoryAuto: true, memoryInject: true,
-    memoryByChat: {}, activeTab: 'image',
+    memoryByChat: {}, memoryCache: {}, activeTab: 'image',
     size: '1024x1024', quality: 'auto', timeoutSeconds: 600, autoHide: true, autoTrigger: false,
     floatTop: 0.7,
 });

@@ -25,6 +25,10 @@
 #tib-root .tib-tab:hover { color: #d7d2cb; }
 #tib-root .tib-tab[aria-selected="true"] { background: #ffffff0d; border-color: #ffffff14; color: #edc18d; }
 #tib-root .tib-memory-entries { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+#tib-root .tib-memory-branch { margin: 0 0 12px; padding: 10px 12px; border: 1px dashed #e8bf8759; border-radius: 10px; background: #e8bf870d; }
+#tib-root .tib-memory-branch p { margin: 0 0 8px; font-size: 10px; line-height: 1.7; color: #dcc4a1; }
+#tib-root .tib-memory-branch p:last-child { margin: 8px 0 0; color: #9d9a97; }
+#tib-root .tib-memory-branch button { width: 100%; justify-content: center; }
 #tib-root .tib-memory-entry { border: 1px solid #ffffff14; border-radius: 10px; background: #161719a6; padding: 10px 12px; }
 #tib-root .tib-memory-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 #tib-root .tib-memory-head strong { color: #e8c79b; font-size: 12px; letter-spacing: .5px; overflow-wrap: anywhere; }

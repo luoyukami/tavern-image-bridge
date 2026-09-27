@@ -4,7 +4,8 @@ import { DEFAULTS, endpoints } from '../core.js';
 import {
     MEMORY_KEY, NO_UPDATE, buildMemoryDiffMessages, buildMemorySummaryMessages, buildPrompt, describeMemory,
     extractChatText, formatAppearanceBlock, memoryConnection, memoryRequest, mergeEntries, normalizeMemory,
-    parseAppearance, parseMemoryDiff, planMemoryDiff, speakerNames, userIdentities, validateMemorySettings,
+    parentArchive, parseAppearance, parseMemoryDiff, planMemoryDiff, rememberArchive, speakerNames,
+    userIdentities, validateMemorySettings,
 } from '../memory.js';
 import { createService } from '../service.js';
 
@@ -232,5 +233,26 @@ test('describeMemory reports the archive shape and its source', () => {
     assert.match(text, /截至第 12 层/);
     assert.match(text, /summary-model/);
     assert.match(text, /对比更新/);
+    assert.match(describeMemory({ entries: { 莉娅: 'x' }, kind: 'inherit' }), /继承自母对话/);
     assert.equal(MEMORY_KEY, 'tavern_image_bridge_memory');
+});
+
+test('local archive copies let a branch inherit the parent archive', () => {
+    const parent = { entries: { 莉娅: '银发，深蓝长裙。' }, floor: 9, updatedAt: '2026-09-28T01:00:00.000Z', model: 'm', kind: 'diff' };
+    let cache = rememberArchive({}, 'main chat', parent);
+    assert.deepEqual(parentArchive(cache, { main_chat: 'main chat' }).memory.entries, { 莉娅: '银发，深蓝长裙。' });
+    assert.equal(parentArchive(cache, { main_chat: 'main chat' }).name, 'main chat');
+    assert.deepEqual(parentArchive(cache, { main_chat: 'main chat' }).memory.floor, 9);
+    assert.equal(parentArchive(cache, {}), null);
+    assert.equal(parentArchive(cache, { main_chat: 'unknown chat' }), null);
+    assert.equal(parentArchive(cache, { main_chat: 'main chat-branch' }), null);
+    // An empty archive is not worth offering.
+    assert.equal(parentArchive(rememberArchive({}, 'empty', { entries: {} }), { main_chat: 'empty' }), null);
+    // Untitled chats are not cached, and the cache stays bounded by recency.
+    assert.deepEqual(rememberArchive({}, '', parent), {});
+    for (let i = 0; i < 12; i++) cache = rememberArchive(cache, `chat-${i}`, { ...parent, updatedAt: `2026-10-${String(i + 1).padStart(2, '0')}T00:00:00.000Z` });
+    assert.equal(Object.keys(cache).length, 8);
+    assert.equal('chat-0' in cache, false);
+    assert.equal('chat-11' in cache, true);
+    assert.equal('main chat' in cache, false);
 });

@@ -44,9 +44,22 @@ window.qa = { context, saves: 0, savedChat: null, emit, render, metadataSaves: 0
     // Mirrors stopGeneration(): GENERATION_ENDED still fires, then GENERATION_STOPPED in the same tick.
     stopGeneration() { emit('GENERATION_ENDED', context.chat.length); emit('GENERATION_STOPPED'); },
     switchChat() { context.chatId = context.chatId === 'rainy-tavern' ? 'other-chat' : 'rainy-tavern'; context.chat = structuredClone(baseChat); chatMetadata = {}; emit('CHAT_CHANGED'); render(); },
+    // Mirrors SillyTavern's createBranch/createNewBookmark: the new chat's metadata only carries main_chat,
+    // so the appearance archive does not travel with the branch.
+    branchChat() { const parent = context.chatId; context.chatId = `${parent}-branch`; context.chat = structuredClone(baseChat); chatMetadata = { main_chat: parent }; emit('CHAT_CHANGED'); render(); },
+    // Mirrors the swipe arrow: MESSAGE_SWIPED first, then (when a new swipe is requested) GENERATION_ENDED.
+    swipe(text, { generate = false } = {}) {
+        const last = context.chat.at(-1);
+        last.mes = text;
+        last.swipe_id = (last.swipe_id ?? 0) + 1;
+        emit('MESSAGE_SWIPED', context.chat.length - 1);
+        if (generate) qa.reply('（重新生成的新内容。）');
+    },
 };
 window.SillyTavern = { getContext: () => context };
 render();
 document.querySelector('#sim-reply')?.addEventListener('click', () => qa.reply());
 document.querySelector('#sim-stop')?.addEventListener('click', () => qa.stopGeneration());
+document.querySelector('#sim-swipe')?.addEventListener('click', () => qa.swipe('雨声更密了。我换了一件干燥的灰色斗篷，把湿透的长发拢到耳后。'));
+document.querySelector('#sim-branch')?.addEventListener('click', () => qa.branchChat());
 await import('../index.js');

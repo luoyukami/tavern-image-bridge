@@ -1,5 +1,5 @@
 import { KEY, apiRequest, captureTarget, chatIdentity, eligibleMessages, loadSettings, planAutoGeneration, resolveTargetIndex, safeError } from './core.js';
-import { MEMORY_KEY, buildPrompt, describeMemory, formatAppearanceBlock, memoryConnection, mergeEntries, normalizeMemory, planMemoryDiff } from './memory.js';
+import { MEMORY_KEY, buildPrompt, describeMemory, formatAppearanceBlock, memoryConnection, mergeEntries, normalizeMemory, parentArchive, planMemoryDiff, rememberArchive } from './memory.js';
 import { createService, TargetChangedError } from './service.js';
 
 let mounted;
@@ -75,6 +75,7 @@ function mount() {
             <p id="tib-memory-warning" class="tib-hint" hidden></p>
             <label class="tib-check"><input data-setting="memoryInject" type="checkbox">生图时把档案作为保底发送<span>预设里写 {{appearance}} 可自选位置</span></label>
             <div class="tib-section-label">当前档案</div>
+            <div id="tib-memory-branch" class="tib-memory-branch" hidden></div>
             <p id="tib-memory-status" class="tib-hint"></p>
             <p id="tib-memory-progress" class="tib-hint" role="status" aria-live="polite"></p>
             <div id="tib-memory-entries" class="tib-memory-entries"></div>
@@ -149,6 +150,11 @@ function mount() {
     }
     // ---- 形象记忆 ----
     // 档案按聊天保存：优先写进酒馆的 chat_metadata（跟着这个聊天文件走），旧版本退回到扩展设置里按聊天分区存。
+    // 同时在扩展设置里留一份按对话名的副本，因为酒馆的分支/检查点只带 {main_chat}，档案不会跟过去。
+    function chatName() {
+        const current = getContext();
+        return String(current.getCurrentChatId?.() ?? current.chatId ?? '');
+    }
     function readMemory() {
         const current = getContext();
         const stored = current.chatMetadata?.[MEMORY_KEY];
@@ -166,8 +172,9 @@ function mount() {
             const keys = Object.keys(map);
             if (keys.length > 20) delete map[keys[0]];
             settings.memoryByChat = map;
-            persistSettings();
         }
+        settings.memoryCache = rememberArchive(settings.memoryCache, chatName(), payload);
+        persistSettings();
         memory = payload;
         renderMemory();
         return payload;
@@ -187,7 +194,30 @@ function mount() {
         } else {
             warning.hidden = true;
         }
+        // 分支与检查点只把 {main_chat} 写进新对话的元数据，档案不会跟过去，这里给一条一键沿用的路。
         const rows = Object.entries(memory.entries);
+        const branch = $('#tib-memory-branch');
+        const parent = rows.length ? null : parentArchive(settings.memoryCache, getContext().chatMetadata);
+        const parentName = rows.length ? '' : String(getContext().chatMetadata?.main_chat ?? '').trim();
+        if (parent) {
+            const note = document.createElement('p');
+            note.textContent = `这是从「${parent.name}」分出来的对话，形象档案没有跟随分支。`;
+            const button = document.createElement('button');
+            button.type = 'button'; button.className = 'tib-secondary'; button.dataset.action = 'memory-inherit';
+            button.textContent = `沿用母对话的档案（${Object.keys(parent.memory.entries).length} 个角色）`;
+            const hint = document.createElement('p');
+            hint.textContent = '分支点早于档案记录的时间时，建议改用「总结当前形象」按分支内容重建。';
+            branch.replaceChildren(note, button, hint);
+            branch.hidden = false;
+        } else if (parentName) {
+            const note = document.createElement('p');
+            note.textContent = `这是从「${parentName}」分出来的对话，形象档案没有跟随分支。点「总结当前形象」可以按这个分支的内容重建一份。`;
+            branch.replaceChildren(note);
+            branch.hidden = false;
+        } else {
+            branch.replaceChildren();
+            branch.hidden = true;
+        }
         const container = $('#tib-memory-entries');
         if (!rows.length) {
             const empty = document.createElement('p');
@@ -518,6 +548,13 @@ function mount() {
         const action = event.target.closest('[data-action]')?.dataset.action;
         if (action === 'model-list' || action === 'memory-model-list') { toggleModelList(undefined, action === 'memory-model-list' ? 'memory' : 'image'); return; }
         if (action === 'memory-models') { void runMemoryModels(); return; }
+        if (action === 'memory-inherit') {
+            const parent = parentArchive(settings.memoryCache, getContext().chatMetadata);
+            if (!parent) { memoryProgress('没有可沿用的母对话档案。', 'warning'); return; }
+            writeMemory({ entries: parent.memory.entries, floor: parent.memory.floor, model: parent.memory.model, kind: 'inherit' });
+            memoryProgress(`已沿用「${parent.name}」的档案（${Object.keys(parent.memory.entries).length} 个角色）。`, 'success');
+            return;
+        }
         if (action === 'memory-summary' || action === 'memory-diff') { void runMemory(action === 'memory-summary' ? 'summary' : 'diff'); return; }
         if (action === 'memory-cancel') { memoryJob?.abort('user'); return; }
         if (action === 'memory-clear') {
@@ -592,6 +629,9 @@ function mount() {
             // ST emits GENERATION_ENDED from hideStopButton(), which stopGeneration() also calls,
             // and GENERATION_STOPPED follows in the same tick: defer so a manual stop wins.
             if (name === 'GENERATION_ENDED') setTimeout(() => { void autoRun(); void autoMemory(); }, 0);
+            // 切回旧 swipe 或手改楼层不会触发 GENERATION_ENDED，这里补一次；swipe 触发生成时的
+            // 这一次会被「同一楼层 + 同一文本」去重挡住，不会多花一次请求。
+            if (name === 'MESSAGE_SWIPED' || name === 'MESSAGE_UPDATED') setTimeout(() => void autoMemory(), 0);
             if (opened) refreshTargets();
         };
         context.eventSource.on(type, handler); listeners.push([type, handler]);

@@ -171,8 +171,30 @@ export function normalizeMemory(value) {
         floor: Number(value?.floor) > 0 ? Number(value.floor) : 0,
         updatedAt: typeof value?.updatedAt === 'string' ? value.updatedAt : '',
         model: String(value?.model ?? '').slice(0, 80),
-        kind: value?.kind === 'diff' ? 'diff' : (value?.kind === 'summary' ? 'summary' : ''),
+        kind: ['diff', 'summary', 'inherit'].includes(value?.kind) ? value.kind : '',
     };
+}
+
+/**
+ * 本地档案副本（按对话名保存，有上限）。酒馆的分支与检查点只把 {main_chat} 写进新对话的元数据，
+ * 档案不会跟过去，这份副本用来让分支一键沿用母对话的档案。
+ */
+export function rememberArchive(cache = {}, chatName, memory, limit = 8) {
+    const name = String(chatName ?? '').trim();
+    if (!name) return { ...cache };
+    const next = { ...cache, [name]: normalizeMemory(memory) };
+    const names = Object.keys(next);
+    if (names.length <= limit) return next;
+    const oldestFirst = names.sort((a, b) => String(next[a].updatedAt).localeCompare(String(next[b].updatedAt)));
+    return Object.fromEntries(oldestFirst.slice(-limit).map(key => [key, next[key]]));
+}
+
+/** 当前对话若是分支/检查点，返回母对话可用的档案副本。 */
+export function parentArchive(cache = {}, chatMetadata = {}) {
+    const parent = String(chatMetadata?.main_chat ?? '').trim();
+    if (!parent) return null;
+    const memory = normalizeMemory(cache[parent]);
+    return Object.keys(memory.entries).length ? { name: parent, memory } : null;
 }
 
 /** 注入生图提示词的保底形象块：明确告诉生图模型这是上一次的存档。 */
@@ -300,6 +322,6 @@ export function describeMemory(memory) {
     const names = Object.keys(data.entries);
     if (!names.length) return '还没有形象档案。点「总结当前形象」建一份，之后生图会自动带上它。';
     const when = data.updatedAt ? new Date(data.updatedAt).toLocaleString() : '时间未知';
-    const source = data.kind === 'diff' ? '对比更新' : (data.kind === 'summary' ? '总结' : '手动');
+    const source = data.kind === 'diff' ? '对比更新' : (data.kind === 'summary' ? '总结' : (data.kind === 'inherit' ? '继承自母对话' : '手动'));
     return `${names.length} 个角色 · 上次更新 ${when}${data.floor ? ` · 截至第 ${data.floor} 层` : ''}${data.model ? ` · ${data.model}` : ''} · ${source}`;
 }
