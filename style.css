@@ -1,0 +1,61 @@
+#tib-root { position: fixed; right: 0; width: 68px; z-index: 2000; color: #f1eeea; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color-scheme: dark; }
+#tib-root * { box-sizing: border-box; }
+#tib-root [hidden] { display: none !important; }
+#tib-root button, #tib-root input, #tib-root select, #tib-root textarea { font: inherit; }
+#tib-root button, #tib-root a, #tib-root summary { -webkit-tap-highlight-color: transparent; }
+#tib-root button { cursor: pointer; }
+#tib-root button:disabled { opacity: .5; cursor: wait; }
+#tib-root :focus-visible { outline: 2px solid #e8b980; outline-offset: 3px; }
+#tib-root .tib-launcher { display: grid; place-items: center; width: 50px; height: 50px; padding: 12px; border-radius: 17px; background: #252526; border: 1px solid #b6936680; box-shadow: 0 5px 24px #0006; color: #edc18d; touch-action: none; transition: transform .25s, opacity .25s; position: relative; }
+#tib-root .tib-launcher svg { width: 26px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+#tib-root.tib-docked .tib-launcher { transform: translateX(32px); opacity: .62; }
+#tib-root.tib-docked .tib-launcher:hover, #tib-root.tib-docked .tib-launcher:focus-visible { transform: none; opacity: 1; }
+#tib-root .tib-busy-dot { position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: #e8b980; animation: tib-pulse 1.1s ease-in-out infinite alternate; }
+#tib-root .tib-panel { position: fixed; right: 84px; bottom: 24px; width: 410px; max-width: calc(100vw - 104px); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; border: 1px solid #bba3813d; border-radius: 20px; background: #202124f7; box-shadow: 0 20px 75px #0008; overflow: hidden; backdrop-filter: blur(18px); text-align: left; }
+#tib-root .tib-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 23px 13px; border-bottom: 1px solid #ffffff0d; flex: 0 0 auto; }
+#tib-root .tib-eyebrow { font-size: 9px; letter-spacing: 2.5px; color: #c4a17b; }
+#tib-root h2 { font-size: 20px; letter-spacing: 2px; font-weight: 600; margin: 2px 0 0; }
+#tib-root .tib-icon { width: 32px; height: 32px; border-radius: 50%; border: 0; color: #b7b7bc; background: #ffffff08; font-size: 25px; line-height: 1; }
+#tib-root .tib-body { overflow-y: auto; padding: 16px 23px 18px; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #555 transparent; }
+#tib-root .tib-intro { font-size: 12px; color: #a6a4a4; margin: 0 0 19px; }
+#tib-root .tib-section-label { margin: 18px 0 10px; font-size: 11px; letter-spacing: 2px; color: #d3b491; display: flex; align-items: center; gap: 10px; }
+#tib-root .tib-section-label::after { content: ''; height: 1px; background: #ffffff0d; flex: 1; }
+#tib-root label { display: block; margin: 12px 0 6px; font-size: 12px; font-weight: 500; color: #cfcdcc; }
+#tib-root input:not([type=checkbox]), #tib-root select, #tib-root textarea { display: block; width: 100%; border: 1px solid #ffffff17; background: #161719a6; color: #eeeae6; padding: 9px 10px; margin: 0; border-radius: 8px; min-height: 38px; box-shadow: none; }
+#tib-root input::placeholder { color: #77777d; font-size: 12px; }
+#tib-root textarea { resize: vertical; min-height: 140px; font-size: 12px; line-height: 1.75; }
+#tib-root .tib-check { display: flex; align-items: center; gap: 7px; font-size: 11px; margin: 8px 0 2px; }
+#tib-root input[type=checkbox] { width: 13px; height: 13px; margin: 0; accent-color: #dcba90; }
+#tib-root .tib-check span { margin-left: auto; color: #88888d; font-size: 10px; }
+#tib-root .tib-model-row { display: flex; align-items: end; gap: 8px; }
+#tib-root .tib-model-row > div { flex: 1; min-width: 0; }
+#tib-root .tib-columns { display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; }
+#tib-root .tib-columns > div { min-width: 0; }
+#tib-root .tib-hint { color: #939398; font-size: 10px; line-height: 1.7; margin: 7px 0 10px; }
+#tib-root .tib-details { padding: 12px 0; border-top: 1px solid #ffffff0e; }
+#tib-root summary { cursor: pointer; font-size: 11px; color: #b8b4af; }
+#tib-root pre { font: 11px/1.7 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: #bcb9b3; background: #161719; border-radius: 8px; padding: 12px; max-height: 240px; overflow-y: auto; user-select: text; }
+#tib-root .tib-footer { padding: 13px 23px 18px; border-top: 1px solid #ffffff0e; flex: 0 0 auto; background: #242528; }
+#tib-root #tib-status { font-size: 11px; line-height: 1.65; color: #aaa6a0; margin: 0 0 12px; overflow-wrap: anywhere; white-space: pre-line; max-height: 120px; overflow-y: auto; }
+#tib-root #tib-status[data-type=error] { color: #f2a2a2; }
+#tib-root #tib-status[data-type=warning] { color: #e8bf87; }
+#tib-root #tib-status[data-type=success] { color: #a6ceb0; }
+#tib-root .tib-actions { display: flex; gap: 8px; }
+#tib-root .tib-primary { flex: 1; background: #e6bc89; color: #29221b; font-weight: 600; border: 1px solid #edc593; border-radius: 9px; min-height: 42px; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; }
+#tib-root .tib-primary:hover { background: #efcda4; }
+#tib-root .tib-secondary { display: inline-flex; justify-content: center; align-items: center; color: #c9c3bc; background: #ffffff06; border: 1px solid #ffffff1c; border-radius: 8px; padding: 8px 11px; min-height: 38px; font-size: 11px; white-space: nowrap; text-decoration: none; }
+#tib-root .tib-secondary:hover { background: #ffffff0f; }
+#tib-root .tib-result { margin-top: 10px; }
+#tib-root .tib-result img { max-width: 100%; width: 100%; max-height: 300px; object-fit: contain; display: block; border-radius: 9px; background: #161719; }
+#tib-root .tib-result-actions { display: flex; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
+@keyframes tib-pulse { to { opacity: .35; } }
+@media (max-width: 600px) {
+    #tib-root { right: 0; width: 62px; }
+    #tib-root .tib-panel { left: 10px; right: 10px; bottom: max(76px, env(safe-area-inset-bottom)); width: auto; max-width: none; max-height: calc(100dvh - 96px); border-radius: 16px; }
+    #tib-root .tib-header { padding: 15px 17px 12px; }
+    #tib-root .tib-body { padding: 12px 17px; }
+    #tib-root .tib-footer { padding: 12px 17px 15px; }
+    #tib-root input:not([type=checkbox]), #tib-root select, #tib-root textarea { font-size: 16px; }
+    #tib-root.tib-docked .tib-launcher { transform: translateX(26px); }
+}
+@media (prefers-reduced-motion: reduce) { #tib-root * { animation: none !important; transition: none !important; } }

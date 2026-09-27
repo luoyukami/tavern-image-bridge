@@ -1,0 +1,243 @@
+import { KEY, DEFAULTS, apiRequest, buildPrompt, captureTarget, eligibleMessages, resolveTargetIndex, safeError } from './core.js';
+import { createService, TargetChangedError } from './service.js';
+
+let mounted;
+const getContext = () => globalThis.SillyTavern.getContext();
+
+function mount() {
+    if (mounted || !globalThis.SillyTavern?.getContext) return;
+    const context = getContext();
+    const stored = context.extensionSettings[KEY] || {};
+    const settings = { ...DEFAULTS, ...stored, apiKey: stored.rememberKey ? stored.apiKey || '' : '' };
+    const lifetime = new AbortController();
+    const service = createService(getContext);
+    let job = null, pending = null, previewUrl = null, hideTimer = null, clockTimer = null, selectedIndex = -1;
+    let opened = false, lastFocus = null, wasDragged = false, startedAt = 0;
+
+    const root = document.createElement('div');
+    root.id = 'tib-root';
+    root.innerHTML = `
+      <button type="button" class="tib-launcher" aria-label="打开酒馆生图面板，可上下拖动" aria-expanded="false" aria-controls="tib-panel" title="酒馆生图 · 可上下拖动">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><circle cx="8" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/></svg><span class="tib-busy-dot" hidden></span>
+      </button>
+      <section id="tib-panel" class="tib-panel" role="dialog" aria-modal="false" aria-labelledby="tib-title" hidden>
+        <header class="tib-header"><div><span class="tib-eyebrow">CLI PROXY API</span><h2 id="tib-title">酒馆生图</h2></div><button type="button" data-action="close" class="tib-icon" aria-label="收起面板">×</button></header>
+        <div class="tib-body">
+          <p class="tib-intro">把此刻的故事，变成一幅画。</p>
+          <div class="tib-section-label">连接</div>
+          <label for="tib-url">API 地址</label><input id="tib-url" data-setting="baseUrl" type="url" placeholder="http://127.0.0.1:8317/v1" spellcheck="false" autocomplete="off">
+          <label for="tib-key">API Key</label><input id="tib-key" data-setting="apiKey" type="password" placeholder="CLIProxyAPI 客户端密钥" autocomplete="off" spellcheck="false">
+          <label class="tib-check"><input data-setting="rememberKey" type="checkbox">记住密钥<span>保存到酒馆设置</span></label>
+          <div class="tib-model-row"><div><label for="tib-model">图片模型</label><input id="tib-model" data-setting="model" list="tib-models" autocomplete="off" spellcheck="false"></div><button type="button" data-action="models" class="tib-secondary">读取模型</button></div>
+          <datalist id="tib-models"><option value="gpt-image-2.5"></option><option value="gpt-image-2.5-flare"></option><option value="gpt-image-2.5-sunburst"></option><option value="gpt-image-2"></option></datalist>
+          <div class="tib-section-label">场景</div>
+          <div class="tib-columns"><div><label for="tib-count">最近聊天层数</label><input id="tib-count" data-setting="recentCount" type="number" min="1" max="100" step="1"></div><div><label for="tib-target">图片插入楼层</label><select id="tib-target" aria-describedby="tib-context-info"></select></div></div>
+          <p id="tib-context-info" class="tib-hint"></p>
+          <label for="tib-preset">生图预设</label><textarea id="tib-preset" data-setting="preset" rows="7" spellcheck="false"></textarea>
+          <p class="tib-hint">可用 {{chat}}、{{char}}、{{user}}。不写 {{chat}} 时，聊天会自动追加到预设末尾。</p>
+          <details class="tib-details"><summary>图片与悬浮设置</summary><div class="tib-columns">
+            <div><label for="tib-size">图片比例</label><select id="tib-size" data-setting="size"><option value="1024x1024">方形 · 1024 × 1024</option><option value="1536x1024">横向 · 1536 × 1024</option><option value="1024x1536">纵向 · 1024 × 1536</option><option value="auto">自动</option></select></div>
+            <div><label for="tib-quality">图片质量</label><select id="tib-quality" data-setting="quality"><option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">极高 · 2.5</option><option value="max">最高 · 2.5</option></select></div></div>
+            <label for="tib-timeout">最长等待（秒）</label><input id="tib-timeout" data-setting="timeoutSeconds" type="number" min="30" max="1800" step="30">
+            <label class="tib-check"><input data-setting="autoHide" type="checkbox">悬浮按钮闲置时自动贴边隐藏</label>
+          </details>
+          <details class="tib-details" id="tib-preview"><summary>预览发送内容</summary><pre id="tib-prompt"></pre></details>
+          <div id="tib-result" class="tib-result" hidden><a id="tib-image-link" target="_blank" rel="noopener"><img id="tib-image" alt="本次生成的场景插画"></a><div class="tib-result-actions"><a id="tib-download" class="tib-secondary" download>下载图片</a><button type="button" data-action="retry" class="tib-secondary" hidden>重试保存并插入</button><button type="button" data-action="discard" class="tib-secondary" title="清除内存中的结果；不删除已保存的图片">清除预览</button></div></div>
+        </div>
+        <footer class="tib-footer"><p id="tib-status" role="status" aria-live="polite">配置会自动保存；密钥默认仅保留在本次页面会话。</p><div class="tib-actions"><button type="button" data-action="generate" class="tib-primary">生成并插入楼层 <span aria-hidden="true">↗</span></button><button type="button" data-action="cancel" class="tib-secondary" hidden>取消</button></div></footer>
+      </section>`;
+    document.body.append(root);
+    const $ = selector => root.querySelector(selector);
+    const panel = $('#tib-panel'), launcher = $('.tib-launcher');
+    const listen = (element, event, fn) => element.addEventListener(event, fn, { signal: lifetime.signal });
+
+    function persistSettings() {
+        const next = { ...settings, apiKey: settings.rememberKey ? settings.apiKey : '' };
+        getContext().extensionSettings[KEY] = next;
+        getContext().saveSettingsDebounced();
+    }
+    function status(text, type = '') { $('#tib-status').textContent = text; $('#tib-status').dataset.type = type; }
+    function position() {
+        const max = Math.max(12, innerHeight - 64);
+        const fraction = Number.isFinite(settings.floatTop) ? settings.floatTop : 0.7;
+        root.style.top = `${Math.max(12, Math.min(max, fraction * innerHeight))}px`;
+    }
+    function wake() { clearTimeout(hideTimer); root.classList.remove('tib-docked'); }
+    function scheduleHide() {
+        clearTimeout(hideTimer);
+        if (settings.autoHide && !opened && !root.contains(document.activeElement)) hideTimer = setTimeout(() => root.classList.add('tib-docked'), 2200);
+    }
+    function open() {
+        opened = true; lastFocus = document.activeElement; panel.hidden = false;
+        launcher.setAttribute('aria-expanded', 'true'); wake(); refreshTargets();
+        $('[data-action="close"]').focus();
+    }
+    function close() {
+        opened = false; panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
+        if (root.contains(document.activeElement)) (lastFocus?.isConnected ? lastFocus : launcher).focus();
+        scheduleHide();
+    }
+    function refreshPrompt() {
+        try {
+            const ctx = getContext(), target = resolveTargetIndex(ctx.chat, selectedIndex);
+            const info = buildPrompt(ctx, settings, target);
+            $('#tib-context-info').textContent = `读取截至第 ${target + 1} 层的 ${info.count} 层有效聊天；图片附在第 ${target + 1} 层。`;
+            $('#tib-prompt').textContent = info.prompt;
+        } catch (error) {
+            $('#tib-context-info').textContent = safeError(error);
+            $('#tib-prompt').textContent = '当前没有可发送的内容。';
+        }
+    }
+    function refreshTargets() {
+        const select = $('#tib-target');
+        select.replaceChildren(new Option('最新有效楼层', '-1'));
+        const rows = eligibleMessages(getContext().chat);
+        for (const { message, index } of rows.slice(-100).reverse()) select.add(new Option(`第 ${index + 1} 层 · ${message.name || (message.is_user ? '用户' : '角色')}`, String(index)));
+        if (selectedIndex !== -1 && ![...select.options].some(option => Number(option.value) === selectedIndex)) selectedIndex = -1;
+        select.value = String(selectedIndex); refreshPrompt(); updateRetryLabel();
+    }
+    function setBusy(value) {
+        for (const action of ['generate', 'models', 'retry', 'discard']) $(`[data-action="${action}"]`).disabled = value;
+        $('[data-action="cancel"]').hidden = !value;
+        $('.tib-busy-dot').hidden = !value;
+        panel.setAttribute('aria-busy', String(value));
+        if (!value) clearInterval(clockTimer);
+    }
+    function showResult(result) {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        const bytes = Uint8Array.from(atob(result.image.base64), char => char.charCodeAt(0));
+        previewUrl = URL.createObjectURL(new Blob([bytes], { type: result.image.mime }));
+        $('#tib-image').src = previewUrl;
+        $('#tib-image-link').href = previewUrl;
+        $('#tib-download').href = previewUrl;
+        $('#tib-download').download = `tavern-image-${result.id}.${result.image.format}`;
+        $('#tib-result').hidden = false;
+        updateRetryLabel();
+    }
+    function updateRetryLabel() {
+        const button = $('[data-action="retry"]');
+        button.hidden = !pending || pending.saved;
+        if (!pending) return;
+        button.textContent = pending.detached && !pending.boundTarget ? '插入当前所选楼层' : '重试保存并插入';
+    }
+    async function saveAndAttach(result, signal, manual = false) {
+        status('图片已生成，正在保存到酒馆…');
+        await service.persist(result, signal);
+        signal?.throwIfAborted();
+        let target = result.boundTarget || result.target;
+        if (manual && result.detached && !result.boundTarget) {
+            const ctx = getContext(); target = captureTarget(ctx, resolveTargetIndex(ctx.chat, selectedIndex));
+        }
+        const index = await service.attach(result, target);
+        status(`已保存，图片已插入第 ${index + 1} 层。`, 'success');
+        updateRetryLabel();
+    }
+    function showFailure(error, config, controller) {
+        if (error instanceof TargetChangedError) {
+            if (pending) pending.detached = true;
+            status(error.message, 'warning');
+        } else if (controller.signal.aborted) {
+            const reason = controller.signal.reason;
+            status(reason === 'timeout' ? '等待超时。代理可能仍在处理，请检查代理日志后再决定是否重新生成。' : '已停止等待。代理是否终止生成取决于服务端；已返回的图片仍可保存。', 'warning');
+        } else status(safeError(error, config.apiKey), 'error');
+        updateRetryLabel();
+    }
+    async function run(action) {
+        if (job) return;
+        const config = { ...settings };
+        const controller = new AbortController(); job = controller; setBusy(true);
+        const seconds = Number(config.timeoutSeconds);
+        const timeout = setTimeout(() => controller.abort('timeout'), (Number.isFinite(seconds) && seconds >= 30 ? seconds : 600) * 1000);
+        try {
+            if (action === 'models') {
+                status('正在读取模型列表…');
+                const body = await apiRequest(config, 'models', { signal: controller.signal });
+                if (!Array.isArray(body.data)) throw new Error('模型接口没有返回 data 数组。');
+                const names = body.data.map(model => model.id).filter(name => typeof name === 'string').sort();
+                $('#tib-models').replaceChildren(...names.map(name => new Option(name, name)));
+                status(`已读取 ${names.length} 个模型。可输入或选择图片模型；列表不保证该模型有生图权限。`, 'success');
+            } else if (action === 'retry' && pending) {
+                await saveAndAttach(pending, controller.signal, true);
+            } else if (action === 'generate') {
+                if (pending && !pending.saved) throw new Error('上一张图片还未插入。请先使用“重试保存并插入”或“插入当前所选楼层”，以免丢失结果。');
+                persistSettings(); refreshPrompt(); startedAt = Date.now();
+                const showProgress = () => status(`正在生成场景插画… ${Math.floor((Date.now() - startedAt) / 1000)} 秒`);
+                showProgress(); clockTimer = setInterval(showProgress, 1000);
+                const result = await service.generate(config, selectedIndex, controller.signal);
+                pending = result; clearInterval(clockTimer); showResult(result);
+                await saveAndAttach(result, controller.signal);
+            }
+        } catch (error) { showFailure(error, config, controller); }
+        finally { clearTimeout(timeout); job = null; setBusy(false); }
+    }
+
+    for (const input of root.querySelectorAll('[data-setting]')) {
+        const key = input.dataset.setting;
+        if (input.type === 'checkbox') input.checked = Boolean(settings[key]); else input.value = settings[key];
+        listen(input, 'input', () => {
+            settings[key] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
+            persistSettings(); refreshPrompt(); wake(); scheduleHide();
+        });
+    }
+    listen($('#tib-target'), 'change', event => { selectedIndex = Number(event.target.value); refreshPrompt(); });
+    listen($('#tib-preview'), 'toggle', refreshPrompt);
+    listen(root, 'click', event => {
+        // The hit area stays put while the docked button slides out on hover.
+        if (event.target === root && !opened) { open(); return; }
+        const action = event.target.closest('[data-action]')?.dataset.action;
+        if (action === 'close') close();
+        if (action === 'cancel') job?.abort('user');
+        if (action === 'discard' && !job) {
+            pending = null;
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            previewUrl = null; $('#tib-result').hidden = true; $('#tib-image').removeAttribute('src');
+            updateRetryLabel(); status('已清除预览。已插入楼层的图片不受影响。');
+        }
+        if (['generate', 'models', 'retry'].includes(action)) void run(action);
+    });
+    listen(launcher, 'click', () => { if (wasDragged) { wasDragged = false; return; } opened ? close() : open(); });
+    listen(root, 'pointerenter', wake); listen(root, 'pointerleave', scheduleHide);
+    listen(root, 'focusin', wake); listen(root, 'focusout', () => setTimeout(scheduleHide, 0));
+    listen(document, 'keydown', event => { if (event.key === 'Escape' && opened) { close(); event.stopPropagation(); } });
+    listen(document, 'pointerdown', event => { if (opened && !root.contains(event.target)) close(); });
+    listen(window, 'resize', position);
+    let drag = null;
+    listen(launcher, 'pointerdown', event => {
+        if (event.button !== 0) return;
+        drag = { y: event.clientY, top: root.getBoundingClientRect().top }; wasDragged = false;
+        launcher.setPointerCapture(event.pointerId); wake();
+    });
+    listen(launcher, 'pointermove', event => {
+        if (!drag) return;
+        const delta = event.clientY - drag.y;
+        if (Math.abs(delta) > 5) wasDragged = true;
+        if (wasDragged) { settings.floatTop = Math.max(12, Math.min(innerHeight - 64, drag.top + delta)) / innerHeight; position(); }
+    });
+    listen(launcher, 'pointerup', () => { if (drag && wasDragged) persistSettings(); drag = null; scheduleHide(); });
+    listen(launcher, 'pointercancel', () => { drag = null; });
+
+    const listeners = [];
+    for (const name of ['CHAT_CHANGED', 'MESSAGE_RECEIVED', 'MESSAGE_SENT', 'MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'GENERATION_ENDED']) {
+        const type = context.eventTypes?.[name];
+        if (!type) continue;
+        const handler = () => { if (name === 'CHAT_CHANGED') selectedIndex = -1; if (opened) refreshTargets(); };
+        context.eventSource.on(type, handler); listeners.push([type, handler]);
+    }
+    const entry = document.createElement('button');
+    entry.type = 'button'; entry.className = 'menu_button'; entry.textContent = '打开酒馆生图';
+    entry.title = 'CLIProxyAPI 图片生成设置';
+    document.querySelector('#extensions_settings2, #extensions_settings')?.append(entry);
+    listen(entry, 'click', open);
+    position(); refreshTargets(); scheduleHide();
+    mounted = { destroy() {
+        job?.abort('disabled'); lifetime.abort(); clearTimeout(hideTimer); clearInterval(clockTimer);
+        for (const [type, handler] of listeners) context.eventSource.removeListener?.(type, handler);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        root.remove(); entry.remove(); mounted = null;
+    } };
+}
+
+export function onDisable() { mounted?.destroy(); }
+export function onEnable() { mount(); }
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once: true });
+else mount();

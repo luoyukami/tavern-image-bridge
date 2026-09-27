@@ -1,0 +1,14 @@
+{
+  "display_name": "酒馆生图 · CLIProxyAPI",
+  "loading_order": 50,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "luoyukami",
+  "homePage": "https://github.com/luoyukami/tavern-image-bridge",
+  "version": "1.0.0",
+  "auto_update": true,
+  "minimum_client_version": "1.12.0",
+  "hooks": { "enable": "onEnable", "disable": "onDisable" }
+}
