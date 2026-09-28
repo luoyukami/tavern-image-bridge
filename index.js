@@ -1,9 +1,10 @@
 import { KEY, apiRequest, captureTarget, chatIdentity, eligibleMessages, loadSettings, planAutoGeneration, resolveTargetIndex, safeError } from './core.js';
-import { MEMORY_KEY, buildPrompt, describeMemory, formatAppearanceBlock, memoryConnection, mergeEntries, normalizeMemory, parentArchive, planMemoryDiff, rememberArchive } from './memory.js';
+import { MEMORY_KEY, buildMemoryDiffMessages, buildMemorySummaryMessages, buildPrompt, describeMemory, formatAppearanceBlock, memoryConnection, mergeEntries, normalizeMemory, parentArchive, planMemoryDiff, rememberArchive } from './memory.js';
 import { createService, TargetChangedError } from './service.js';
 
 let mounted;
 const getContext = () => globalThis.SillyTavern.getContext();
+const previewMessages = messages => messages.map(message => `【${message.role}】\n${message.content}`).join('\n\n');
 
 function mount() {
     if (mounted || !globalThis.SillyTavern?.getContext) return;
@@ -80,6 +81,7 @@ function mount() {
             <p id="tib-memory-progress" class="tib-hint" role="status" aria-live="polite"></p>
             <div id="tib-memory-entries" class="tib-memory-entries"></div>
             <details class="tib-details" id="tib-memory-details"><summary>查看会发给生图模型的形象文本</summary><pre id="tib-memory-preview"></pre></details>
+            <details class="tib-details" id="tib-memory-prompt-details"><summary>查看会发给形象模型的提示词（总结 / 对比）</summary><pre id="tib-memory-prompt-preview"></pre></details>
             <div class="tib-memory-actions"><button type="button" data-action="memory-summary" class="tib-primary">总结当前形象</button><button type="button" data-action="memory-diff" class="tib-secondary">对比最新回复</button><button type="button" data-action="memory-clear" class="tib-secondary">清空档案</button><button type="button" data-action="memory-cancel" class="tib-secondary" hidden>取消</button></div>
           </section>
         </div>
@@ -196,6 +198,7 @@ function mount() {
         }
         // 分支与检查点只把 {main_chat} 写进新对话的元数据，档案不会跟过去，这里给一条一键沿用的路。
         const rows = Object.entries(memory.entries);
+        const cardName = String(getContext().name2 ?? '').trim();
         const branch = $('#tib-memory-branch');
         const parent = rows.length ? null : parentArchive(settings.memoryCache, getContext().chatMetadata);
         const parentName = rows.length ? '' : String(getContext().chatMetadata?.main_chat ?? '').trim();
@@ -241,12 +244,36 @@ function mount() {
                 text.className = 'tib-memory-text';
                 text.textContent = description;
                 item.append(head, text);
+                // 酒馆给楼层打标签用的是角色卡名，模型有时会把卡片标题也当角色记进来。
+                // 不自动删（卡片名也可能就是角色名），只提醒，让人自己判断。
+                if (cardName && name.trim().toLowerCase() === cardName.toLowerCase()) {
+                    const warn = document.createElement('p');
+                    warn.className = 'tib-hint';
+                    warn.textContent = '这条与角色卡同名：可能只是卡片标题，不是剧情里的角色（例如卡叫「租借女友」，剧情里的角色其实叫「伊蕾娜」）。确认不是角色就点右上角的 × 删掉。';
+                    item.append(warn);
+                }
                 return item;
             }));
         }
         $('#tib-memory-preview').textContent = settings.memoryInject === false
             ? '（已关闭：生图时不会带上形象档案）'
             : (formatAppearanceBlock(memory, { user: getContext().name1 || '' }) || '（档案为空，暂时不会附加内容）');
+        // 形象模型实际收到的提示词：展开了才拼，免得每次渲染都拼一遍长文本。
+        if ($('#tib-memory-prompt-details').open) {
+            const ctx = getContext();
+            const blocks = [];
+            try {
+                blocks.push(`【总结当前形象 · 实际发送】\n${previewMessages(buildMemorySummaryMessages(ctx, settings).messages)}`);
+            } catch (error) {
+                blocks.push(`【总结当前形象 · 实际发送】\n${safeError(error)}`);
+            }
+            try {
+                blocks.push(`【对比最新回复 · 实际发送】\n${previewMessages(buildMemoryDiffMessages(ctx, settings, memory).messages)}`);
+            } catch (error) {
+                blocks.push(`【对比最新回复 · 实际发送】\n${safeError(error)}`);
+            }
+            $('#tib-memory-prompt-preview').textContent = blocks.join('\n\n');
+        }
     }
     function setTab(name) {
         const tab = name === 'memory' ? 'memory' : 'image';
@@ -538,6 +565,7 @@ function mount() {
     listen($('#tib-target'), 'change', event => { selectedIndex = Number(event.target.value); refreshPrompt(); });
     listen($('#tib-preview'), 'toggle', refreshPrompt);
     listen($('#tib-memory-details'), 'toggle', renderMemory);
+    listen($('#tib-memory-prompt-details'), 'toggle', renderMemory);
     listen(root, 'click', event => {
         const tab = event.target.closest('[data-tab]')?.dataset.tab;
         if (tab) { setTab(tab); return; }

@@ -5,7 +5,7 @@ import {
     MEMORY_DIFF_SYSTEM, MEMORY_KEY, MEMORY_SUMMARY_SYSTEM, NO_UPDATE, buildMemoryDiffMessages,
     buildMemorySummaryMessages, buildPrompt, describeMemory, extractChatText, formatAppearanceBlock,
     memoryConnection, memoryRequest, mergeEntries, normalizeMemory, parentArchive, parseAppearance,
-    parseMemoryDiff, planMemoryDiff, rememberArchive, speakerNames, userIdentities, validateMemorySettings,
+    parseMemoryDiff, planMemoryDiff, rememberArchive, speakerNames, userIdentities, identityFacts, validateMemorySettings,
 } from '../memory.js';
 import { createService } from '../service.js';
 
@@ -63,11 +63,40 @@ test('summary request labels floors, lists the cast, and honours the floor limit
     assert.match(all.messages[0].content, /非用户角色/);
     assert.match(all.messages[1].content, /第 1 层 · 莉娅/);
     assert.match(all.messages[1].content, /第 2 层 · 旅行者\]（用户）/);
-    assert.match(all.messages[1].content, /聊天中真实出现的角色名：莉娅/);
+    // 标签名不再被说成「真实出现的角色名」：酒馆用的是角色卡名，可能只是卡片标题
+    assert.match(all.messages[1].content, /消息标签里出现的名字：莉娅/);
+    assert.match(all.messages[1].content, /酒馆里这张角色卡的名字：莉娅/);
+    assert.doesNotMatch(all.messages[1].content, /真实出现的角色名/);
+    assert.match(all.messages[0].content, /名字以正文为准/);
     const one = buildMemorySummaryMessages(context, { ...settings, memoryFloors: 1 });
     assert.equal(one.count, 1);
     assert.doesNotMatch(one.messages[1].content, /第 1 层/);
     assert.throws(() => buildMemorySummaryMessages({ ...context, chat: [{ name: '莉娅', mes: '  ' }] }, settings), /没有可总结/);
+});
+
+test('卡片名只是标题时，提示词会明确交代它不等于剧情角色名', () => {
+    // 卡叫「租借女友」，剧情里的角色其实叫「伊蕾娜」—— 这正是档案里混进假条目的原因
+    const context = host();
+    context.name2 = '租借女友';
+    context.chat = [
+        { name: '租借女友', mes: '「我叫伊蕾娜，今天由我陪你。」灰白色长发的少女欠身行礼。', extra: {} },
+        { name: '旅行者', mes: '“那就麻烦你了。”', is_user: true, extra: {} },
+        { name: '租借女友', mes: '伊蕾娜把宽檐魔女帽摘下抱在胸前。', extra: {} },
+    ];
+    const facts = identityFacts(context).join('\n');
+    assert.match(facts, /酒馆里这张角色卡的名字：租借女友（消息标签用的就是它，可能只是卡片标题/);
+    assert.match(facts, /消息标签里出现的名字：租借女友（标签名不一定是剧情里的称呼，以正文为准）/);
+    assert.doesNotMatch(facts, /真实出现的角色名/);
+    // 系统提示词两边都要有这条规矩，否则模型还是会照着标签建档案
+    assert.match(MEMORY_SUMMARY_SYSTEM, /名字以正文为准/);
+    assert.match(MEMORY_DIFF_SYSTEM, /名字以正文为准/);
+    assert.match(MEMORY_SUMMARY_SYSTEM, /不要为它建档案/);
+    const summary = buildMemorySummaryMessages(context, settings);
+    assert.match(summary.messages[1].content, /酒馆里这张角色卡的名字：租借女友/);
+    const diff = buildMemoryDiffMessages(context, settings, { entries: {} });
+    assert.match(diff.messages[1].content, /可能只是卡片标题/);
+    // 没有角色卡（群聊等）时不硬塞这一行
+    assert.doesNotMatch(identityFacts({ ...context, name2: '' }).join('\n'), /角色卡的名字/);
 });
 
 test('diff request sends only the newest reply plus the saved archive', () => {

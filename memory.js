@@ -19,7 +19,7 @@ B. 穿戴物：常穿的上衣、下装、外套、鞋、帽子、手套、围�
 - 用户（{{user}}）的外形。
 
 规则：
-1. 只为聊天里真实出现的角色建档案，角色名必须和聊天里写的完全一致，不要翻译、不要加头衔。
+1. 名字以正文为准，标签不算：每层开头的「[第 N 层 · XX]」是酒馆给楼层打的标签，用的是**角色卡的名字**，可能只是卡片标题而不是剧情里的角色名。要写正文里角色怎么自称、别人怎么称呼的那个名字（正文里自称「伊蕾娜」就写「伊蕾娜」）；某个标签名在正文里从没被当作称呼用过，就不要为它建档案。角色名与正文一致，不要翻译、不要加头衔。
 2. 以最后楼层为准：前文写过、后来换掉的衣服、发型或配饰，只写最新的那次。
 3. 每条写成一句话的白描，按「发色发型，瞳色，体型，上身，下身，鞋，配饰」的顺序，用逗号分隔；没写到的项直接省略。
 4. 聊天里没有明确写到的项不要凭想象补全，也不要写「未明确」「不详」这类占位词。
@@ -41,12 +41,13 @@ export const MEMORY_DIFF_SYSTEM = `你是酒馆聊天记录里的角色形象档
 - 用户（{{user}}）的外形，哪怕用户换了衣服也不要输出。
 
 规则：
-1. 只输出固定外形确实发生变化的角色，没有变化的角色不要出现在输出里。
-2. 变化角色的值必须是替换整条档案的完整新描述（不是差异片段、不是「改成…」这类说明），按「发色发型，瞳色，体型，上身，下身，鞋，配饰」的顺序写成一句话，没有的项省略。
-3. 档案为空时，把最新回复里明确写出的角色固定外形当作新增条目。
-4. 所有角色都没有变化时，只输出一个词：${NO_UPDATE}。不带标点、不带解释、不带代码块、不要输出别的字。
-5. 有变化时只输出 JSON 对象：键是角色名，值是完整的新描述。不要输出任何多余文字。
-6. 每条不超过 80 字。
+1. 名字以正文为准，标签不算：最新回复开头的「[第 N 层 · XX]」是酒馆给楼层打的标签，用的是**角色卡的名字**，可能只是卡片标题而不是剧情里的角色名。新增条目要写正文里角色怎么自称、别人怎么称呼的那个名字；标签名在正文里从没被当作称呼用过，就不要用它建条目。
+2. 只输出固定外形确实发生变化的角色，没有变化的角色不要出现在输出里。
+3. 变化角色的值必须是替换整条档案的完整新描述（不是差异片段、不是「改成…」这类说明），按「发色发型，瞳色，体型，上身，下身，鞋，配饰」的顺序写成一句话，没有的项省略。
+4. 档案为空时，把最新回复里明确写出的角色固定外形当作新增条目。
+5. 所有角色都没有变化时，只输出一个词：${NO_UPDATE}。不带标点、不带解释、不带代码块、不要输出别的字。
+6. 有变化时只输出 JSON 对象：键是角色名，值是完整的新描述。不要输出任何多余文字。
+7. 每条不超过 80 字。
 
 输出示例（无变化）：
 ${NO_UPDATE}
@@ -58,7 +59,19 @@ function fillMacros(text, context = {}) {
     return String(text).replace(/\{\{(user|char)\}\}/g, (_, key) => key === 'user' ? context.name1 || '用户' : context.name2 || '角色');
 }
 
-/** 用户的身份名，用于从模型返回里剔除用户自己。 */
+// 交给形象模型的身份事实。这里刻意不再把消息标签说成「真实出现的角色名」：
+// 酒馆是用角色卡的名字给楼层打标签的，卡片名常常只是卡片标题（比如卡叫「租借女友」，
+// 剧情里的角色其实叫「伊蕾娜」），照字面喂给模型会让它把卡片名也建进档案。
+export function identityFacts(context = {}) {
+    const card = String(context?.name2 ?? '').trim();
+    return [
+        `用户（不要记录其外形）：${userIdentities(context).join('、') || context.name1 || '用户'}`,
+        card ? `酒馆里这张角色卡的名字：${card}（消息标签用的就是它，可能只是卡片标题，不等于剧情里的角色名）` : '',
+        `消息标签里出现的名字：${speakerNames(context.chat).join('、') || '（无）'}（标签名不一定是剧情里的称呼，以正文为准）`,
+    ].filter(Boolean);
+}
+
+/** 用户身份名，用于从模型返回里剔除用户自己。 */
 export function userIdentities(context = {}) {
     const names = [context.name1, ...(context.chat ?? []).filter(message => message?.is_user).map(message => message.name)]
         .map(name => String(name ?? '').trim()).filter(Boolean);
@@ -267,8 +280,7 @@ export function buildMemorySummaryMessages(context, settings) {
     if (!rows.length) throw new Error('当前没有可总结的聊天内容。');
     const transcript = rows.map(({ message, index, text }) => `[第 ${index + 1} 层 · ${message.name || '未知'}]${message.is_user ? '（用户）' : ''}\n${text}`).join('\n\n');
     const user = [
-        `用户（不要记录其外形）：${userIdentities(context).join('、') || context.name1 || '用户'}`,
-        `聊天中真实出现的角色名：${speakerNames(context.chat).join('、') || '（无）'}`,
+        ...identityFacts(context),
         '', '【聊天内容】', transcript,
     ].join('\n');
     if (user.length > MEMORY_LIMITS.promptChars) throw new Error(`总结内容共 ${user.length} 字符，超过 ${MEMORY_LIMITS.promptChars}；请减少总结楼层数。`);
@@ -282,8 +294,7 @@ export function buildMemoryDiffMessages(context, settings, memory = {}) {
     if (row.message.is_user) throw new Error('最新一层是用户消息，先把模型回复生成出来再对比。');
     const archive = normalizeMemory(memory).entries;
     const user = [
-        `用户（不要记录其外形）：${userIdentities(context).join('、') || context.name1 || '用户'}`,
-        `聊天中真实出现的角色名：${speakerNames(context.chat).join('、') || '（无）'}`,
+        ...identityFacts(context),
         '', '【已保存的形象档案】',
         Object.keys(archive).length ? JSON.stringify(archive, null, 1) : '（空）',
         '', `【最新一层回复 · 第 ${row.index + 1} 层 · ${row.message.name || '角色'}】`, row.text,
