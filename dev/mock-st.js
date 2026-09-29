@@ -1,9 +1,9 @@
 const handlers = new Map();
 let chatMetadata = {};
 const baseChat = [
-    { name: '莉娅', mes: '雨水沿着酒馆的玻璃窗缓缓滑落。壁炉里跳动着暖橙色的火光，我放下手中的书，抬头看向被推开的木门。', extra: {}, swipe_id: 0, swipe_info: [{ extra: {} }] },
+    { name: '莉娅', mes: '雨水沿着酒馆的玻璃窗缓缓滑落。壁炉里跳动着暖橙色的火光，我放下手中的书，抬头看向被推开的木门。\n![上一张插画](/mock-image?floor=1)', extra: { media: [{ type: 'image', url: '/mock-image?floor=1' }] }, swipe_id: 0, swipe_info: [{ extra: {} }] },
     { name: '旅行者', mes: '我收起沾满雨水的深色斗篷，走到壁炉边。“今晚还有空房吗？”', is_user: true, extra: {} },
-    { name: '莉娅', mes: '“当然。”我微笑着从柜台后走来，将一杯冒着热气的蜂蜜酒放在你面前。铜灯下，木桌上铺着一张泛黄的地图。', extra: {}, swipe_id: 0, swipe_info: [{ extra: {} }] },
+    { name: '莉娅', mes: '“当然。”我微笑着从柜台后走来，将一杯冒着热气的蜂蜜酒放在你面前。铜灯下，木桌上铺着一张泛黄的地图。', extra: { media: [{ type: 'image', url: '/mock-image?floor=3' }] }, swipe_id: 0, swipe_info: [{ extra: {} }] },
 ];
 const context = {
     chat: structuredClone(baseChat), chatId: 'rainy-tavern', characterId: 0, groupId: null,

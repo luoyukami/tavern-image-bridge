@@ -108,3 +108,25 @@
 @keyframes tib-shimmer { from { transform: translateX(-130%); } to { transform: translateX(330%); } }
 @keyframes tib-dot { 0%, 100% { opacity: .22; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-3px); } }
 @media (prefers-reduced-motion: reduce) { .tib-placeholder, .tib-placeholder * { animation: none !important; } }
+
+/* 参考图：缩略图列表 + 楼层选图（面板里的卡片用不透明底色，免得聊天正文透过来打架） */
+#tib-root .tib-file { position: relative; cursor: pointer; }
+#tib-root .tib-file:focus-within { outline: 2px solid #e6bc89; outline-offset: 2px; }
+#tib-root .tib-ref-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+#tib-root .tib-ref-list:empty { display: none; }
+#tib-root .tib-ref-item { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 8px; border: 1px solid #ffffff1c; border-radius: 10px; background: #202126; }
+#tib-root .tib-ref-thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; background: #161719; display: block; }
+#tib-root .tib-ref-body { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+#tib-root .tib-ref-head { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #d8cfc2; }
+#tib-root .tib-ref-note { min-height: 32px; padding: 6px 9px; font-size: 11px; }
+#tib-root .tib-ref-picker { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 220px; overflow-y: auto; padding: 8px; border: 1px solid #ffffff1c; border-radius: 10px; background: #191a1e; }
+#tib-root .tib-ref-option { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 9px; align-items: center; text-align: left; padding: 6px; border: 1px solid transparent; border-radius: 9px; background: #ffffff08; color: #cfc8bf; font-size: 11px; }
+#tib-root .tib-ref-option img { width: 44px; height: 44px; }
+#tib-root .tib-ref-option:hover { background: #ffffff12; }
+#tib-root .tib-ref-option[aria-pressed="true"] { border-color: #e6bc8955; background: #e6bc891f; color: #f1e7da; }
+#tib-root #tib-ref-branch { margin-top: 8px; }
+#tib-root #tib-ref-branch p { color: #939398; font-size: 10px; line-height: 1.7; margin: 0 0 7px; }
+#tib-root #tib-ref-status[data-type=error] { color: #f2a2a2; }
+#tib-root #tib-ref-status[data-type=warning] { color: #e8bf87; }
+#tib-root #tib-ref-status[data-type=success] { color: #a6ceb0; }
+#tib-root #tib-ref-preview { white-space: pre-line; }

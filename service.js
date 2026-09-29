@@ -4,25 +4,48 @@ import {
     memoryConnection, memoryRequest, mergeEntries, normalizeMemory, parseAppearance, parseMemoryDiff,
     speakerNames, userIdentities, validateMemorySettings,
 } from './memory.js';
+import { buildReferenceBlock, loadReferenceImages, measureBlob, normalizeRefs, shrinkImage } from './reference.js';
 
 export class TargetChangedError extends Error {
     constructor() { super('原聊天或楼层已变化，图片已保留。可下载，或手动插入当前选择的楼层。'); this.name = 'TargetChangedError'; }
 }
 
+/** 参考图取不到时的错误：带上失败清单，界面据此决定「跳过这几张继续」还是放弃。 */
+export class ReferenceLoadError extends Error {
+    constructor(failed, images) {
+        super(`有 ${failed.length} 张参考图取不到：${failed.map(item => `${item.label}（${item.reason}）`).join('；')}`);
+        this.name = 'ReferenceLoadError';
+        this.failed = failed;
+        this.images = images;
+    }
+}
+
 export function createService(getContext, fetchImpl = fetch) {
+    const loadReferences = (settings, refs, signal) => loadReferenceImages(refs, {
+        settings, requestHeaders: getContext().getRequestHeaders(), signal, fetchImpl,
+        shrink: shrinkImage, measure: measureBlob,
+    });
     return {
+        loadReferences,
         // 生图：档案在这里被快照，所以形象总结/diff 与生图互不阻塞，
-        // 本次请求用的是"点下按钮那一刻"的档案。
-        async generate(settings, requestedIndex, signal, memory = null) {
+        // 本次请求用的是"点下按钮那一刻"的档案。参考图同理，由界面预检后传进来。
+        async generate(settings, requestedIndex, signal, memory = null, reference = {}) {
             validateSettings(settings);
             const context = getContext();
             const index = resolveTargetIndex(context.chat, requestedIndex);
             const target = captureTarget(context, index);
-            const { prompt, count } = buildPrompt(context, settings, index, memory);
+            const refs = normalizeRefs(reference.refs);
+            const images = Array.isArray(reference.images) ? reference.images : (await loadReferences(settings, refs, signal)).images;
+            const block = buildReferenceBlock(refs, { template: settings.referencePrompt, char: context.name2 });
+            const { prompt, count } = buildPrompt(context, settings, index, memory, block);
             const requestHeaders = context.getRequestHeaders();
-            const body = await apiRequest(settings, 'generate', { signal, prompt, fetchImpl, requestHeaders });
+            // 有参考图时走 /images/edits（上游据此把图当参考用），没有就维持原样。
+            const body = await apiRequest(settings, images.length ? 'edit' : 'generate', { signal, prompt, images, fetchImpl, requestHeaders });
             const image = await extractImage(body, { signal, fetchImpl, settings, requestHeaders });
-            return { id: createImageId(), image, target, count, model: settings.model, url: null, boundTarget: null, saved: false };
+            return {
+                id: createImageId(), image, target, count, model: settings.model, url: null, boundTarget: null, saved: false,
+                reference: images.length, prompt,
+            };
         },
         // 总结请求：给最近 N 层，让模型产出完整的角色形象档案。
         async summarize(settings, signal) {

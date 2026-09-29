@@ -241,16 +241,18 @@ export function formatAppearanceBlock(memory, { user = '' } = {}) {
     return lines.join('\n');
 }
 
-/** 组装生图提示词。appearance 为空或关闭注入时不带档案块。 */
-export function buildPrompt(context, settings, targetIndex, memory = null) {
+/** 组装生图提示词。appearance / reference 为空时对应块不出现。 */
+export function buildPrompt(context, settings, targetIndex, memory = null, reference = '') {
     const rows = eligibleMessages(context.chat, targetIndex).slice(-Number(settings.recentCount));
     const chat = rows.map(({ message, index, text }) => `[第 ${index + 1} 层 · ${message.name || (message.is_user ? context.name1 : context.name2) || '角色'}]\n${text}`).join('\n\n');
     const appearance = settings.memoryInject === false ? '' : formatAppearanceBlock(memory, { user: context.name1 || '' });
-    const values = { chat, char: context.name2 || '角色', user: context.name1 || '用户', appearance };
+    const refBlock = String(reference ?? '').trim();
+    const values = { chat, char: context.name2 || '角色', user: context.name1 || '用户', appearance, reference: refBlock };
     const preset = String(settings.preset ?? '').trim();
-    let prompt = preset.replace(/\{\{(chat|char|user|appearance)\}\}/g, (_, key) => values[key]);
+    let prompt = preset.replace(/\{\{(chat|char|user|appearance|reference)\}\}/g, (_, key) => values[key]);
     if (!preset.includes('{{chat}}')) prompt += `\n\n【聊天情节】\n${chat}`;
     if (appearance && !preset.includes('{{appearance}}')) prompt += `\n\n${appearance}`;
+    if (refBlock && !preset.includes('{{reference}}')) prompt += `\n\n${refBlock}`;
     prompt = prompt.trim();
     if (prompt.length > 32000) throw new Error(`发送内容共 ${prompt.length} 字符，超过 32000 字符；请减少聊天层数或缩短预设。`);
     return { prompt, count: rows.length, indices: rows.map(row => row.index) };

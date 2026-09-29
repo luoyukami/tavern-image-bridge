@@ -10,12 +10,18 @@ export const DEFAULT_PRESET = `请根据以下聊天情节，直接生成一张�
 【聊天情节】
 {{chat}}`;
 
+export const DEFAULT_REFERENCE_PROMPT = `【参考图】
+本次附上 {{count}} 张参考图，只用来固定角色的长相、身材与画风：
+{{list}}
+除此之外的一切——姿势、动作、服装、道具、场景、天气、光线、构图——一律以【聊天情节】里的最新剧情为准，参考图里的姿势、背景和服装不要照搬。
+若参考图与【角色形象档案】冲突：脸和身材以参考图为准，服装与场景以聊天原文为准。`;
+
 export const DEFAULTS = Object.freeze({
     transport: 'server', baseUrl: 'http://127.0.0.1:8317/v1', apiKey: '', rememberKey: false,
-    model: 'gpt-image-2.5', recentCount: 6, preset: DEFAULT_PRESET,
+    model: 'gpt-image-2.5', recentCount: 6, preset: DEFAULT_PRESET, referencePrompt: DEFAULT_REFERENCE_PROMPT,
     memoryModel: '', memoryBaseUrl: '', memoryApiKey: '', memoryRememberKey: false,
     memoryFloors: 40, memoryTimeoutSeconds: 180, memoryAuto: true, memoryInject: true,
-    memoryByChat: {}, memoryCache: {}, activeTab: 'image',
+    memoryByChat: {}, memoryCache: {}, referenceCache: {}, activeTab: 'image',
     size: '1024x1024', quality: 'auto', timeoutSeconds: 600, autoHide: true, autoTrigger: false,
     floatTop: 0.7,
 });
@@ -40,9 +46,16 @@ export function endpoints(input) {
     }
     let path = url.pathname.replace(/\/+$/, '');
     if (/\/(chat\/completions|responses|models)$/.test(path)) throw new Error('请填写 API 基础地址 /v1 或完整的 /v1/images/generations。');
-    if (path.endsWith('/images/generations')) path = path.slice(0, -'/images/generations'.length);
+    for (const suffix of ['/images/generations', '/images/edits']) {
+        if (path.endsWith(suffix)) path = path.slice(0, -suffix.length);
+    }
     if (!path) path = '/v1';
-    return { generate: `${url.origin}${path}/images/generations`, models: `${url.origin}${path}/models`, chat: `${url.origin}${path}/chat/completions` };
+    return {
+        generate: `${url.origin}${path}/images/generations`,
+        edit: `${url.origin}${path}/images/edits`,
+        models: `${url.origin}${path}/models`,
+        chat: `${url.origin}${path}/chat/completions`,
+    };
 }
 
 export function validateSettings(settings) {
@@ -102,8 +115,25 @@ export function targetStillValid(context, target) {
         && target.message.mes === target.text && target.message.swipe_id === target.swipeId;
 }
 
-export function makePayload(settings, prompt) {
-    return { model: settings.model.trim(), prompt, n: 1, size: settings.size, quality: settings.quality, output_format: 'png', stream: false };
+/**
+ * Images payload. `images` (a list of data URLs or {image_url} objects) is only ever
+ * attached when there is at least one reference image: the Open Images API then treats
+ * the request as an edit and keeps the reference for identity, instead of ignoring it.
+ */
+export function makePayload(settings, prompt, images = []) {
+    const payload = { model: settings.model.trim(), prompt, n: 1, size: settings.size, quality: settings.quality, output_format: 'png', stream: false };
+    const references = makeImages(images);
+    if (references.length) payload.images = references;
+    return payload;
+}
+
+export function makeImages(images = []) {
+    return (Array.isArray(images) ? images : []).map(item => {
+        const value = typeof item === 'string' ? item : item?.image_url;
+        if (typeof value !== 'string' || !value.trim()) throw new Error('参考图数据无效。');
+        if (!/^data:image\/[a-z+.-]+;base64,[A-Za-z0-9+/=]+$/i.test(value.trim())) throw new Error('参考图必须是 base64 data URL。');
+        return { image_url: value.trim() };
+    });
 }
 
 export function safeError(error, secret = '') {
@@ -166,11 +196,12 @@ export function routeRequest(settings, target, { signal, method = 'GET', body, r
     return { url: transport === 'server' ? `/proxy/${encodeURIComponent(url.href)}` : url.href, options };
 }
 
-export async function apiRequest(settings, kind, { signal, prompt, fetchImpl = fetch, requestHeaders = {} } = {}) {
-    if (!['models', 'generate'].includes(kind)) throw new Error('无效的 API 请求类型。');
+export async function apiRequest(settings, kind, { signal, prompt, images = [], fetchImpl = fetch, requestHeaders = {} } = {}) {
+    if (!['models', 'generate', 'edit'].includes(kind)) throw new Error('无效的 API 请求类型。');
+    const posting = kind !== 'models';
     const { url, options } = routeRequest(settings, endpoints(settings.baseUrl)[kind], {
-        signal, requestHeaders, method: kind === 'models' ? 'GET' : 'POST',
-        body: kind === 'models' ? undefined : JSON.stringify(makePayload(settings, prompt)),
+        signal, requestHeaders, method: posting ? 'POST' : 'GET',
+        body: posting ? JSON.stringify(makePayload(settings, prompt, images)) : undefined,
     });
     let response;
     try { response = await fetchImpl(url, options); } catch (error) {

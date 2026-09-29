@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.env.PORT || 8765);
 const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=';
-const state = { generations: 0, uploads: 0, failUpload: false, proxyEnabled: true, imageUrl: false, delay: 800, requests: [], proxyRequests: [], upstreamHeaders: [], files: {}, chatRequests: [], chatReplies: [], chatReply: '{"莉娅":"银白色长发披散过腰，金色竖瞳，身形纤细。穿深蓝色酒保长裙，外罩白色围裙，脚踏棕色短靴，左耳一枚铜环。"}', chatDelay: 200 };
+const state = { generations: 0, edits: 0, editRequests: [], uploads: 0, failUpload: false, proxyEnabled: true, imageUrl: false, delay: 800, requests: [], proxyRequests: [], upstreamHeaders: [], files: {}, chatRequests: [], chatReplies: [], chatReply: '{"莉娅":"银白色长发披散过腰，金色竖瞳，身形纤细。穿深蓝色酒保长裙，外罩白色围裙，脚踏棕色短靴，左耳一枚铜环。"}', chatDelay: 200 };
 const server = http.createServer(async (req, res) => {
     const reply = (body, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
     const pathname = new URL(req.url, `http://127.0.0.1:${port}`).pathname;
@@ -19,7 +19,7 @@ const server = http.createServer(async (req, res) => {
         let target;
         try { target = new URL(decodeURIComponent(pathname.slice('/proxy/'.length))); } catch { return reply({ error: 'Invalid proxy target' }, 400); }
         // This development-only proxy is restricted to the local mock's endpoints.
-        if (target.origin !== `http://127.0.0.1:${port}` || !['/v1/models', '/v1/images/generations', '/v1/chat/completions', '/mock-image'].includes(target.pathname)) return reply({ error: 'Mock proxy only permits local test endpoints' }, 403);
+        if (target.origin !== `http://127.0.0.1:${port}` || !['/v1/models', '/v1/images/generations', '/v1/images/edits', '/v1/chat/completions', '/mock-image'].includes(target.pathname)) return reply({ error: 'Mock proxy only permits local test endpoints' }, 403);
         state.proxyRequests.push({ target: target.href, method: req.method });
         const headers = {};
         // Model ST's removal of Cookie, CSRF and other browser-specific headers.
@@ -38,6 +38,10 @@ const server = http.createServer(async (req, res) => {
         const queued = Array.isArray(state.chatReplies) && state.chatReplies.length ? state.chatReplies.shift() : state.chatReply;
         const content = typeof queued === 'string' ? queued : JSON.stringify(queued);
         return setTimeout(() => reply({ choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }] }), state.chatDelay);
+    }
+    if (pathname === '/v1/images/edits') {
+        state.edits++; state.editRequests.push(body);
+        return setTimeout(() => reply({ data: [{ b64_json: pixel }] }), state.delay);
     }
     if (pathname === '/v1/images/generations') {
         state.generations++; state.requests.push(body);

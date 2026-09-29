@@ -1,6 +1,7 @@
-import { KEY, apiRequest, captureTarget, chatIdentity, eligibleMessages, loadSettings, planAutoGeneration, resolveTargetIndex, safeError } from './core.js';
+import { KEY, apiRequest, captureTarget, chatIdentity, eligibleMessages, loadSettings, planAutoGeneration, readJson, resolveTargetIndex, safeError } from './core.js';
 import { MEMORY_KEY, buildMemoryDiffMessages, buildMemorySummaryMessages, buildPrompt, describeMemory, formatAppearanceBlock, memoryConnection, mergeEntries, normalizeMemory, parentArchive, planMemoryDiff, rememberArchive } from './memory.js';
-import { createService, TargetChangedError } from './service.js';
+import { REFS_KEY, REF_LIMITS, activeRefs, addRef, buildReferenceBlock, collectFloorImages, describeLoadedImages, describeRefs, formatBytes, formatLabel, needsShrink, parentRefs, rememberRefs, removeRef, setRefNote, toggleRef, blobToDataUrl, isDataUrl, measureBlob, normalizeRefs, refSourceLabel, shrinkImage } from './reference.js';
+import { createService, ReferenceLoadError, TargetChangedError } from './service.js';
 
 let mounted;
 const getContext = () => globalThis.SillyTavern.getContext();
@@ -17,6 +18,7 @@ function mount() {
     let opened = false, lastFocus = null, startedAt = 0, stoppedAt = 0, placeholder = null;
     let drag = null, swallowClick = false, swallowClickUntil = 0;
     let memoryJob = null, lastDiff = null, memory = readMemory();
+    let refs = readRefs(), lastRefAttempt = null, refBusy = false, pickerRows = new Map();
 
     const root = document.createElement('div');
     root.id = 'tib-root';
@@ -49,7 +51,22 @@ function mount() {
           <p id="tib-context-info" class="tib-hint"></p>
           <label class="tib-check"><input data-setting="autoTrigger" type="checkbox">模型回复结束后自动生图<span>插入刚生成的楼层；该层已有插画、正在生成或上次结果未插入时自动跳过</span></label>
           <label for="tib-preset">生图预设</label><textarea id="tib-preset" data-setting="preset" rows="7" spellcheck="false"></textarea>
-          <p class="tib-hint">可用 {{chat}}、{{char}}、{{user}}、{{appearance}}。不写 {{chat}} 时聊天会自动追加到预设末尾；不写 {{appearance}} 时形象档案（若已开启）也追加在末尾。</p>
+          <p class="tib-hint">可用 {{chat}}、{{char}}、{{user}}、{{appearance}}、{{reference}}。不写 {{chat}} 时聊天会自动追加到预设末尾；不写 {{appearance}} 时形象档案（若已开启）也追加在末尾，{{reference}} 同理。</p>
+          <div class="tib-section-label">参考图</div>
+          <p id="tib-ref-status" class="tib-hint">还没有参考图。上传一张，或从楼层里挑一张，生成时就会作为脸 / 身材 / 画风参考一起发送。</p>
+          <div class="tib-model-actions">
+            <label class="tib-secondary tib-file">上传图片<input id="tib-ref-file" type="file" accept="image/*" multiple hidden></label>
+            <button type="button" data-action="ref-picker" class="tib-secondary" aria-expanded="false" aria-controls="tib-ref-picker">从楼层选图</button>
+            <button type="button" data-action="ref-clear" class="tib-secondary">清空参考图</button>
+          </div>
+          <div id="tib-ref-list" class="tib-ref-list" role="group" aria-label="已选参考图"></div>
+          <div id="tib-ref-branch" class="tib-memory-branch" hidden></div>
+          <div id="tib-ref-picker" class="tib-ref-picker" role="group" aria-label="可用的楼层图片" hidden></div>
+          <details class="tib-details" id="tib-reference-prompt-details"><summary>参考图说明（会写进提示词）</summary>
+            <textarea id="tib-reference-prompt" data-setting="referencePrompt" rows="6" spellcheck="false"></textarea>
+            <p class="tib-hint">可用 {{count}}（张数）、{{list}}（每张一行，自动生成）、{{char}}。里面已经把「脸 / 身材 / 画风看参考图，其余看原文」写出来，改的时候保留这层意思。</p>
+          </details>
+          <p id="tib-ref-preview" class="tib-hint" hidden></p>
           <details class="tib-details"><summary>图片与悬浮设置</summary><div class="tib-columns">
             <div><label for="tib-size">图片比例</label><select id="tib-size" data-setting="size"><option value="1024x1024">方形 · 1024 × 1024</option><option value="1536x1024">横向 · 1536 × 1024</option><option value="1024x1536">纵向 · 1024 × 1536</option><option value="auto">自动</option></select></div>
             <div><label for="tib-quality">图片质量</label><select id="tib-quality" data-setting="quality"><option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">极高 · 2.5</option><option value="max">最高 · 2.5</option></select></div></div>
@@ -85,7 +102,7 @@ function mount() {
             <div class="tib-memory-actions"><button type="button" data-action="memory-summary" class="tib-primary">总结当前形象</button><button type="button" data-action="memory-diff" class="tib-secondary">对比最新回复</button><button type="button" data-action="memory-clear" class="tib-secondary">清空档案</button><button type="button" data-action="memory-cancel" class="tib-secondary" hidden>取消</button></div>
           </section>
         </div>
-        <footer class="tib-footer"><p id="tib-status" role="status" aria-live="polite">配置会自动保存；密钥默认仅保留在本次页面会话。</p><div class="tib-actions"><button type="button" data-action="generate" class="tib-primary">生成并插入楼层 <span aria-hidden="true">↗</span></button><button type="button" data-action="cancel" class="tib-secondary" hidden>取消</button></div></footer>
+        <footer class="tib-footer"><p id="tib-status" role="status" aria-live="polite">配置会自动保存；密钥默认仅保留在本次页面会话。</p><div class="tib-actions"><button type="button" data-action="generate" class="tib-primary">生成并插入楼层 <span aria-hidden="true">↗</span></button><button type="button" data-action="generate-ignore-refs" class="tib-secondary" hidden>忽略取不到的参考图继续</button><button type="button" data-action="cancel" class="tib-secondary" hidden>取消</button></div></footer>
       </section>`;
     document.body.append(root);
     const $ = selector => root.querySelector(selector);
@@ -367,6 +384,194 @@ function mount() {
         writeMemory({ ...memory, entries });
         memoryProgress(`已从档案里删除 ${name}。`);
     }
+    // ---- 参考图 ----
+    // 状态跟聊天走（chat_metadata），并在扩展设置里按对话名留一份有界副本：
+    // 酒馆的分支/检查点只把 {main_chat} 带过去，参考图需要一键沿用。
+    function refStatus(text, type = '') {
+        const node = $('#tib-ref-status');
+        node.textContent = text;
+        node.dataset.type = type;
+    }
+    function readRefs() {
+        const current = getContext();
+        const stored = current.chatMetadata?.[REFS_KEY];
+        if (stored && typeof stored === 'object') return normalizeRefs(stored);
+        return normalizeRefs(settings.referenceCache?.[chatIdentity(current)]);
+    }
+    function persistRefs() {
+        const current = getContext();
+        const payload = normalizeRefs(refs);
+        if (typeof current.updateChatMetadata === 'function') {
+            current.updateChatMetadata({ [REFS_KEY]: payload }, false);
+            current.saveMetadataDebounced?.();
+        } else {
+            settings.referenceCache = { ...(settings.referenceCache ?? {}), [chatIdentity(current)]: payload };
+        }
+        settings.referenceCache = rememberRefs(settings.referenceCache, chatName(), payload);
+        persistSettings();
+        refs = payload;
+        refreshPrompt();
+        return payload;
+    }
+    function writeRefs(next) {
+        refs = normalizeRefs(next);
+        persistRefs();
+        renderRefs();
+        return refs;
+    }
+    function charFolder() {
+        return (getContext().name2 || 'Tavern').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80) || 'Tavern';
+    }
+    function renderRefs() {
+        refStatus(describeRefs(refs));
+        const list = $('#tib-ref-list');
+        if (!refs.length) {
+            list.replaceChildren();
+        } else {
+            list.replaceChildren(...refs.map(ref => {
+                const item = document.createElement('div');
+                item.className = 'tib-ref-item';
+                const thumb = new Image();
+                thumb.className = 'tib-ref-thumb'; thumb.alt = ''; thumb.loading = 'lazy'; thumb.src = ref.url;
+                const body = document.createElement('div');
+                body.className = 'tib-ref-body';
+                const head = document.createElement('div');
+                head.className = 'tib-ref-head';
+                const toggle = document.createElement('input');
+                toggle.type = 'checkbox'; toggle.checked = ref.enabled; toggle.dataset.refToggle = ref.id;
+                toggle.setAttribute('aria-label', `生成时是否带上这张参考图（${refSourceLabel(ref)}）`);
+                const label = document.createElement('span');
+                label.textContent = refSourceLabel(ref);
+                head.append(toggle, label);
+                const note = document.createElement('input');
+                note.type = 'text'; note.className = 'tib-ref-note'; note.value = ref.note ?? '';
+                note.placeholder = '备注（可选），例如「只参考画风」';
+                note.dataset.refNote = ref.id;
+                body.append(head, note);
+                const remove = document.createElement('button');
+                remove.type = 'button'; remove.className = 'tib-memory-remove'; remove.dataset.refRemove = ref.id;
+                remove.setAttribute('aria-label', `移除参考图 ${refSourceLabel(ref)}`);
+                remove.textContent = '×';
+                item.append(thumb, body, remove);
+                return item;
+            }));
+        }
+        // 分支/检查点只带 {main_chat}，参考图不会跟过去，这里给一条一键沿用的路。
+        const branch = $('#tib-ref-branch');
+        const parent = refs.length ? null : parentRefs(settings.referenceCache, getContext().chatMetadata);
+        const parentName = refs.length ? '' : String(getContext().chatMetadata?.main_chat ?? '').trim();
+        if (parent) {
+            const note = document.createElement('p');
+            note.textContent = `这是从「${parent.name}」分出来的对话，参考图没有跟随分支。`;
+            const button = document.createElement('button');
+            button.type = 'button'; button.className = 'tib-secondary'; button.dataset.action = 'ref-inherit';
+            button.textContent = `沿用母对话的参考图（${parent.refs.length} 张）`;
+            branch.replaceChildren(note, button);
+            branch.hidden = false;
+        } else if (parentName) {
+            const note = document.createElement('p');
+            note.textContent = `这是从「${parentName}」分出来的对话，参考图没有跟随分支，需要的话重新上传或从楼层里选。`;
+            branch.replaceChildren(note);
+            branch.hidden = false;
+        } else {
+            branch.replaceChildren();
+            branch.hidden = true;
+        }
+        syncRefPicker();
+    }
+    function syncRefPicker() {
+        for (const option of $('#tib-ref-picker').querySelectorAll('.tib-ref-option')) {
+            option.setAttribute('aria-pressed', String(refs.some(ref => ref.url === pickerRows.get(option.dataset.refId)?.url)));
+        }
+    }
+    function renderRefPicker() {
+        const node = $('#tib-ref-picker');
+        pickerRows = new Map(collectFloorImages(getContext().chat).map(row => [row.id, row]));
+        const rows = [...pickerRows.values()].reverse();
+        if (!rows.length) {
+            const empty = document.createElement('p');
+            empty.className = 'tib-hint';
+            empty.textContent = '这个聊天里还没有图片。先用「上传图片」加一张，或用生图生成一张后再回来挑。';
+            node.replaceChildren(empty);
+            return;
+        }
+        node.replaceChildren(...rows.map(row => {
+            const option = document.createElement('button');
+            option.type = 'button'; option.className = 'tib-ref-option'; option.dataset.refId = row.id;
+            option.setAttribute('aria-pressed', String(refs.some(ref => ref.url === row.url)));
+            const thumb = new Image();
+            thumb.className = 'tib-ref-thumb'; thumb.alt = ''; thumb.loading = 'lazy'; thumb.src = row.url;
+            const label = document.createElement('span');
+            label.textContent = `第 ${row.index + 1} 层 · ${row.name || '角色'}`;
+            option.append(thumb, label);
+            return option;
+        }));
+    }
+    function toggleRefPicker(force) {
+        const node = $('#tib-ref-picker');
+        const show = typeof force === 'boolean' ? force : node.hidden;
+        if (show) renderRefPicker();
+        node.hidden = !show;
+        $('[data-action="ref-picker"]').setAttribute('aria-expanded', String(show));
+    }
+    async function uploadRefFile(blob) {
+        const context = getContext();
+        const dataUrl = await blobToDataUrl(blob);
+        const format = formatLabel(blob.type) || 'png';
+        const response = await fetch('/api/images/upload', {
+            method: 'POST', headers: context.getRequestHeaders(),
+            body: JSON.stringify({ image: dataUrl.slice(dataUrl.indexOf(',') + 1), format, ch_name: charFolder(), filename: `tavern-reference-${Date.now()}` }),
+        });
+        const body = await readJson(response);
+        if (typeof body.path !== 'string' || !body.path || /^(?:[a-z]+:|\/\/)/i.test(body.path) || body.path.includes('\\')) throw new Error('酒馆返回的图片保存路径无效。');
+        return body.path;
+    }
+    async function addUploadRefs(fileList) {
+        const files = [...fileList].filter(file => String(file.type || '').startsWith('image/'));
+        if (!files.length) { refStatus('请选择图片文件（PNG / JPEG / WebP）。', 'warning'); return; }
+        if (refBusy) return;
+        refBusy = true;
+        try {
+            for (const file of files) {
+                refStatus(`正在处理 ${file.name || '图片'}…`);
+                let blob = file;
+                const probe = await measureBlob(blob).catch(() => null);
+                if (needsShrink({ bytes: blob.size, width: probe?.width, height: probe?.height })) {
+                    refStatus(`正在压缩 ${file.name || '图片'}…`);
+                    blob = await shrinkImage(blob, { maxSide: REF_LIMITS.maxSide, quality: REF_LIMITS.jpegQuality });
+                }
+                if (blob.size > REF_LIMITS.maxBytes) throw new Error(`图片 ${formatBytes(blob.size)} 超过 ${formatBytes(REF_LIMITS.maxBytes)} 上限。`);
+                const path = await uploadRefFile(blob);
+                const result = addRef(refs, { url: path, source: 'upload' });
+                if (result.invalid) { refStatus('这张图片无法作为参考图使用。', 'warning'); continue; }
+                if (!result.added) {
+                    refStatus(result.full ? `最多 ${REF_LIMITS.count} 张参考图，先移除一张再添加。` : '这张图片已经在参考图里了。', 'warning');
+                    continue;
+                }
+                writeRefs(result.refs);
+                refStatus(`已添加参考图（${formatBytes(blob.size)}）· ${describeRefs(refs)}`, 'success');
+            }
+        } catch (error) {
+            refStatus(safeError(error, settings.apiKey), 'error');
+        } finally {
+            refBusy = false;
+            $('#tib-ref-file').value = '';
+        }
+    }
+    /** 生成前预检：把选中的参考图取成 data URL，失败的单独列出，不静默丢图。 */
+    async function prepareReference(config, signal) {
+        const chosen = activeRefs(refs);
+        if (!chosen.length) return { refs: normalizeRefs(refs), images: [] };
+        status(`正在读取 ${chosen.length} 张参考图…`);
+        const loaded = await service.loadReferences(config, chosen, signal);
+        if (loaded.failed.length) {
+            lastRefAttempt = { refs: chosen.filter(ref => loaded.images.some(image => image.id === ref.id)), images: loaded.images, failed: loaded.failed };
+            throw new ReferenceLoadError(loaded.failed, loaded.images);
+        }
+        lastRefAttempt = null;
+        refStatus(`参考图已就绪 · ${describeLoadedImages(loaded.images).split('\n').join(' / ')}`, 'success');
+        return { refs: chosen, images: loaded.images };
+    }
     function position() {
         const max = Math.max(12, innerHeight - 64);
         const fraction = Number.isFinite(settings.floatTop) ? settings.floatTop : 0.7;
@@ -393,25 +598,35 @@ function mount() {
     function open() {
         opened = true; lastFocus = document.activeElement; panel.hidden = false;
         placePanel();
-        memory = readMemory(); setTab(settings.activeTab);
-        launcher.setAttribute('aria-expanded', 'true'); wake(); refreshTargets();
+        memory = readMemory(); refs = readRefs(); setTab(settings.activeTab);
+        launcher.setAttribute('aria-expanded', 'true'); wake(); refreshTargets(); renderRefs();
         $('[data-action="close"]').focus();
     }
     function close() {
         opened = false; panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
-        toggleModelList(false);
+        toggleModelList(false); toggleRefPicker(false);
         if (root.contains(document.activeElement)) (lastFocus?.isConnected ? lastFocus : launcher).focus();
         scheduleHide();
+    }
+    function referenceBlock() {
+        return buildReferenceBlock(refs, { template: settings.referencePrompt, char: getContext().name2 || '' });
     }
     function refreshPrompt() {
         try {
             const ctx = getContext(), target = resolveTargetIndex(ctx.chat, selectedIndex);
-            const info = buildPrompt(ctx, settings, target, memory);
-            $('#tib-context-info').textContent = `读取截至第 ${target + 1} 层的 ${info.count} 层有效聊天；图片附在第 ${target + 1} 层。`;
+            const chosen = activeRefs(refs);
+            const info = buildPrompt(ctx, settings, target, memory, referenceBlock());
+            $('#tib-context-info').textContent = `读取截至第 ${target + 1} 层的 ${info.count} 层有效聊天；图片附在第 ${target + 1} 层${chosen.length ? `；附上 ${chosen.length} 张参考图` : ''}。`;
             $('#tib-prompt').textContent = info.prompt;
+            const preview = $('#tib-ref-preview');
+            preview.hidden = !chosen.length;
+            preview.textContent = chosen.length
+                ? `会附上的参考图：\n${chosen.map((ref, order) => `第 ${order + 1} 张 · ${refSourceLabel(ref)}${ref.note ? ` · 备注：${ref.note}` : ''}`).join('\n')}`
+                : '';
         } catch (error) {
             $('#tib-context-info').textContent = safeError(error);
             $('#tib-prompt').textContent = '当前没有可发送的内容。';
+            $('#tib-ref-preview').hidden = true;
         }
     }
     function refreshTargets() {
@@ -423,7 +638,7 @@ function mount() {
         select.value = String(selectedIndex); refreshPrompt(); updateRetryLabel();
     }
     function setBusy(value) {
-        for (const action of ['generate', 'models', 'retry', 'discard']) $(`[data-action="${action}"]`).disabled = value;
+        for (const action of ['generate', 'models', 'retry', 'discard', 'generate-ignore-refs']) $(`[data-action="${action}"]`).disabled = value;
         $('[data-action="cancel"]').hidden = !value;
         $('.tib-busy-dot').hidden = !value;
         root.classList.toggle('tib-busy', value);
@@ -502,6 +717,9 @@ function mount() {
         if (error instanceof TargetChangedError) {
             if (pending) pending.detached = true;
             status(error.message, 'warning');
+        } else if (error instanceof ReferenceLoadError) {
+            $('[data-action="generate-ignore-refs"]').hidden = !error.images.length;
+            status(`${error.message}${error.images.length ? `。可以忽略这几张，用剩下的 ${error.images.length} 张继续。` : '。请重新上传或从楼层里重选。'}`, 'warning');
         } else if (controller.signal.aborted) {
             const reason = controller.signal.reason;
             status(reason === 'timeout' ? '等待超时。代理可能仍在处理，请检查代理日志后再决定是否重新生成。' : '已停止等待。代理是否终止生成取决于服务端；已返回的图片仍可保存。', 'warning');
@@ -526,14 +744,18 @@ function mount() {
                 status(`已读取 ${names.length} 个模型。可输入或选择图片模型；列表不保证该模型有生图权限。`, 'success');
             } else if (action === 'retry' && pending) {
                 await saveAndAttach(pending, controller.signal, true);
-            } else if (action === 'generate') {
+            } else if (action === 'generate' || action === 'generate-ignore-refs') {
                 if (pending && !pending.saved) throw new Error('上一张图片还未插入。请先使用“重试保存并插入”或“插入当前所选楼层”，以免丢失结果。');
                 persistSettings(); refreshPrompt(); startedAt = Date.now();
                 const floor = resolveTargetIndex(getContext().chat, targetIndex);
-                showPlaceholder(floor, `正在绘制插画 · ${config.model}`);
-                const showProgress = () => status(`${automatic ? '模型回复已结束，自动生成插画' : '正在生成场景插画'}… ${Math.floor((Date.now() - startedAt) / 1000)} 秒`);
+                // 参考图在占位符之前先取好：取不到就当场报是哪几张，不浪费一次生图。
+                const reference = action === 'generate-ignore-refs' && lastRefAttempt
+                    ? { refs: lastRefAttempt.refs, images: lastRefAttempt.images }
+                    : await prepareReference(config, controller.signal);
+                showPlaceholder(floor, `正在绘制插画 · ${config.model}${reference.images.length ? ` · 参考 ${reference.images.length} 张` : ''}`);
+                const showProgress = () => status(`${automatic ? '模型回复已结束，自动生成插画' : '正在生成场景插画'}${reference.images.length ? `（带 ${reference.images.length} 张参考图）` : ''}… ${Math.floor((Date.now() - startedAt) / 1000)} 秒`);
                 showProgress(); clockTimer = setInterval(showProgress, 1000);
-                const result = await service.generate(config, floor, controller.signal, memory);
+                const result = await service.generate(config, floor, controller.signal, memory, reference);
                 pending = result; clearInterval(clockTimer); showResult(result);
                 await saveAndAttach(result, controller.signal);
             }
@@ -563,6 +785,20 @@ function mount() {
         });
     }
     listen($('#tib-target'), 'change', event => { selectedIndex = Number(event.target.value); refreshPrompt(); });
+    listen($('#tib-ref-file'), 'change', event => { void addUploadRefs(event.target.files ?? []); });
+    listen(root, 'change', event => {
+        const id = event.target?.dataset?.refToggle;
+        if (id) { writeRefs(toggleRef(refs, id, event.target.checked)); refStatus(describeRefs(refs)); }
+    });
+    // 备注边打边存：状态里更新，但**不**重画列表，否则输入框会在打字时失去焦点。
+    let noteTimer = null;
+    listen(root, 'input', event => {
+        const id = event.target?.dataset?.refNote;
+        if (!id) return;
+        refs = setRefNote(refs, id, event.target.value);
+        clearTimeout(noteTimer);
+        noteTimer = setTimeout(persistRefs, 400);
+    });
     listen($('#tib-preview'), 'toggle', refreshPrompt);
     listen($('#tib-memory-details'), 'toggle', renderMemory);
     listen($('#tib-memory-prompt-details'), 'toggle', renderMemory);
@@ -573,6 +809,19 @@ function mount() {
         if (item) { applyModel(item.dataset.model, item.closest('#tib-memory-model-list') ? 'memory' : 'image'); return; }
         const removeName = event.target.closest('[data-memory-remove]')?.dataset.memoryRemove;
         if (removeName) { dropMemoryEntry(removeName); return; }
+        const refRemove = event.target.closest('[data-ref-remove]')?.dataset.refRemove;
+        if (refRemove) { writeRefs(removeRef(refs, refRemove)); refStatus(`已移除 1 张参考图 · ${describeRefs(refs)}`); return; }
+        const refOption = event.target.closest('.tib-ref-option');
+        if (refOption) {
+            const row = pickerRows.get(refOption.dataset.refId);
+            if (row) {
+                const result = addRef(refs, { url: row.url, source: 'floor', floor: row.index });
+                if (result.invalid) refStatus('这张图片不能作为参考图。', 'warning');
+                else if (!result.added) refStatus(result.full ? `最多 ${REF_LIMITS.count} 张参考图，先移除一张再添加。` : '这张图片已经在参考图里了。', 'warning');
+                else { writeRefs(result.refs); refStatus(`已加入第 ${row.index + 1} 层的图片 · ${describeRefs(refs)}`, 'success'); }
+            }
+            return;
+        }
         const action = event.target.closest('[data-action]')?.dataset.action;
         if (action === 'model-list' || action === 'memory-model-list') { toggleModelList(undefined, action === 'memory-model-list' ? 'memory' : 'image'); return; }
         if (action === 'memory-models') { void runMemoryModels(); return; }
@@ -598,6 +847,27 @@ function mount() {
             }
             return;
         }
+        if (action === 'ref-picker') { toggleRefPicker(); return; }
+        if (action === 'ref-inherit') {
+            const parent = parentRefs(settings.referenceCache, getContext().chatMetadata);
+            if (!parent) { refStatus('没有可沿用的母对话参考图。', 'warning'); return; }
+            writeRefs(parent.refs);
+            refStatus(`已沿用「${parent.name}」的 ${parent.refs.length} 张参考图。`, 'success');
+            return;
+        }
+        if (action === 'ref-clear') {
+            const button = $('[data-action="ref-clear"]');
+            if (button.dataset.armed === 'true') {
+                button.dataset.armed = 'false'; button.textContent = '清空参考图';
+                writeRefs([]); toggleRefPicker(false);
+                refStatus('已清空这个聊天的参考图。');
+            } else {
+                button.dataset.armed = 'true'; button.textContent = '再点一次确认清空';
+                refStatus(`再点一次就会移掉这 ${refs.length} 张参考图（只影响这个聊天，不动已生成的图片）。`, 'warning');
+                setTimeout(() => { button.dataset.armed = 'false'; button.textContent = '清空参考图'; }, 4000);
+            }
+            return;
+        }
         if (action === 'close') close();
         if (action === 'cancel') job?.abort('user');
         if (action === 'discard' && !job) {
@@ -606,7 +876,7 @@ function mount() {
             previewUrl = null; $('#tib-result').hidden = true; $('#tib-image').removeAttribute('src');
             updateRetryLabel(); status('已清除预览。已插入楼层的图片不受影响。');
         }
-        if (['generate', 'models', 'retry'].includes(action)) void run(action);
+        if (['generate', 'models', 'retry', 'generate-ignore-refs'].includes(action)) void run(action);
     });
     listen(launcher, 'click', () => {
         const swallowed = swallowClick && Date.now() < swallowClickUntil;
@@ -652,7 +922,7 @@ function mount() {
         const type = context.eventTypes?.[name];
         if (!type) continue;
         const handler = () => {
-            if (name === 'CHAT_CHANGED') { selectedIndex = -1; clearPlaceholder(); memory = readMemory(); lastDiff = null; renderMemory(); }
+            if (name === 'CHAT_CHANGED') { selectedIndex = -1; clearPlaceholder(); memory = readMemory(); refs = readRefs(); lastDiff = null; lastRefAttempt = null; renderMemory(); renderRefs(); }
             if (name === 'GENERATION_STOPPED') stoppedAt = Date.now();
             // ST emits GENERATION_ENDED from hideStopButton(), which stopGeneration() also calls,
             // and GENERATION_STOPPED follows in the same tick: defer so a manual stop wins.
@@ -669,9 +939,9 @@ function mount() {
     entry.title = 'CLIProxyAPI 图片生成设置';
     document.querySelector('#extensions_settings2, #extensions_settings')?.append(entry);
     listen(entry, 'click', open);
-    position(); refreshTargets(); refreshTransportHint(); setTab(settings.activeTab); scheduleHide();
+    position(); refreshTargets(); refreshTransportHint(); setTab(settings.activeTab); renderRefs(); scheduleHide();
     mounted = { destroy() {
-        job?.abort('disabled'); memoryJob?.abort('disabled'); lifetime.abort(); clearTimeout(hideTimer); clearInterval(clockTimer); clearPlaceholder();
+        job?.abort('disabled'); memoryJob?.abort('disabled'); lifetime.abort(); clearTimeout(hideTimer); clearTimeout(noteTimer); clearInterval(clockTimer); clearPlaceholder();
         panelObserver?.disconnect();
         for (const [type, handler] of listeners) context.eventSource.removeListener?.(type, handler);
         if (previewUrl) URL.revokeObjectURL(previewUrl);
